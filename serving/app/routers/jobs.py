@@ -1,0 +1,124 @@
+"""Job description endpoints."""
+
+from __future__ import annotations
+
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, File, Form, UploadFile, status
+
+from app.db import DbSession
+from app.exceptions import ResourceNotFoundError, ValidationFailedError
+from app.repositories.ingestion import JobRepository
+from app.schemas.ingestion import JobCreateRequest, JobResponse
+from app.security import CurrentPrincipal
+from app.services.ingestion import create_job_from_text, create_job_from_upload
+
+router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+@router.post(
+    "",
+    response_model=JobResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a job description",
+    description="Creates a job from pasted text. The job starts in `draft` status.",
+)
+async def create_job(
+    payload: JobCreateRequest,
+    principal: CurrentPrincipal,
+    session: DbSession,
+) -> JobResponse:
+    """Create a job from pasted text.
+
+    Args:
+        payload: Validated job fields.
+        principal: Verified caller.
+        session: Database session.
+
+    Returns:
+        The persisted job.
+    """
+    job = await create_job_from_text(
+        session=session,
+        principal=principal,
+        title=payload.title,
+        description_raw=payload.description_raw,
+        department=payload.department,
+        location=payload.location,
+        employment_type=payload.employment_type,
+        seniority=payload.seniority,
+    )
+    return JobResponse.model_validate(job)
+
+
+@router.post(
+    "/upload",
+    response_model=JobResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload a job description document",
+    description=(
+        "Creates a job by extracting text from an uploaded PDF or DOCX. The "
+        "media type is determined from the file's bytes, not its name."
+    ),
+)
+async def upload_job(
+    principal: CurrentPrincipal,
+    session: DbSession,
+    title: Annotated[str, Form()],
+    file: Annotated[UploadFile, File()],
+) -> JobResponse:
+    """Create a job from an uploaded document.
+
+    Args:
+        principal: Verified caller.
+        session: Database session.
+        title: Job title supplied alongside the file.
+        file: The uploaded job description.
+
+    Returns:
+        The persisted job.
+
+    Raises:
+        ValidationFailedError: If the title is blank.
+    """
+    if not title.strip():
+        raise ValidationFailedError("Title must not be blank.")
+    content = await file.read()
+    job = await create_job_from_upload(
+        session=session,
+        principal=principal,
+        content=content,
+        title=title.strip(),
+    )
+    return JobResponse.model_validate(job)
+
+
+@router.get(
+    "/{job_id}",
+    response_model=JobResponse,
+    summary="Read a job description",
+    description="Jobs belonging to another tenant are reported as not found.",
+)
+async def read_job(
+    job_id: uuid.UUID,
+    principal: CurrentPrincipal,
+    session: DbSession,
+) -> JobResponse:
+    """Read one job.
+
+    Args:
+        job_id: Job identifier.
+        principal: Verified caller.
+        session: Database session.
+
+    Returns:
+        The job.
+
+    Raises:
+        ResourceNotFoundError: If no such job exists for this tenant.
+    """
+    job = await JobRepository(session).get(principal.tenant_id, job_id)
+    if job is None:
+        raise ResourceNotFoundError()
+    return JobResponse.model_validate(job)
