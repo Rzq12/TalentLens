@@ -35,6 +35,14 @@ PARSER_VERSION = "pymupdf-1.24+python-docx-1.1/v1"
 PAGE_SEPARATOR = "\n\n"
 MIN_CHARS_PER_PAGE_FOR_TEXT_LAYER = 20
 
+# Resource ceilings. A file can pass the byte-size check and still be a
+# decompression bomb: a few hundred kilobytes of PDF can declare tens of
+# thousands of pages, or expand into gigabytes of text. Both are cheap to
+# construct and expensive to parse, so the parser bounds its own work rather
+# than trusting that upstream size validation was sufficient.
+MAX_PAGES = 500
+MAX_EXTRACTED_CHARS = 5_000_000  # ~5 MB of text
+
 ParseStatus = Literal["ok", "low_yield", "failed"]
 
 
@@ -138,7 +146,31 @@ def _parse_pdf(content: bytes) -> ParsedDocument:
     """
     try:
         with fitz.open(stream=content, filetype="pdf") as document:
-            pages = [page.get_text("text") for page in document]
+            if document.page_count > MAX_PAGES:
+                logger.warning(
+                    "parse_pdf_rejected_page_count",
+                    page_count=document.page_count,
+                    limit=MAX_PAGES,
+                )
+                raise DocumentParseError(
+                    f"The PDF exceeds the {MAX_PAGES}-page limit."
+                )
+
+            pages: list[str] = []
+            total_chars = 0
+            for page in document:
+                text = page.get_text("text")
+                total_chars += len(text)
+                if total_chars > MAX_EXTRACTED_CHARS:
+                    logger.warning(
+                        "parse_pdf_rejected_text_volume", limit=MAX_EXTRACTED_CHARS
+                    )
+                    raise DocumentParseError(
+                        "The PDF expands to more text than this service will process."
+                    )
+                pages.append(text)
+    except DocumentParseError:
+        raise
     except Exception as err:  # noqa: BLE001 - normalized to a domain error
         logger.warning("parse_pdf_failed", error=str(err), error_type=type(err).__name__)
         raise DocumentParseError("The PDF could not be opened.") from err
@@ -177,7 +209,13 @@ def _parse_docx(content: bytes) -> ParsedDocument:
         logger.warning("parse_docx_failed", error=str(err), error_type=type(err).__name__)
         raise DocumentParseError("The DOCX could not be opened.") from err
 
-    return _assemble(["\n".join(paragraphs)], DOCX_MIME)
+    body = "\n".join(paragraphs)
+    if len(body) > MAX_EXTRACTED_CHARS:
+        logger.warning("parse_docx_rejected_text_volume", limit=MAX_EXTRACTED_CHARS)
+        raise DocumentParseError(
+            "The DOCX expands to more text than this service will process."
+        )
+    return _assemble([body], DOCX_MIME)
 
 
 def parse_document(content: bytes, media_type: str) -> ParsedDocument:

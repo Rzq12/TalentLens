@@ -11,7 +11,7 @@ from app.db import DbSession
 from app.exceptions import ResourceNotFoundError, ValidationFailedError
 from app.repositories.ingestion import JobRepository
 from app.schemas.ingestion import JobCreateRequest, JobResponse
-from app.security import CurrentPrincipal
+from app.security import ReadPrincipal, WritePrincipal
 from app.services.ingestion import create_job_from_text, create_job_from_upload
 from app.utils.upload import read_upload_bounded
 
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 )
 async def create_job(
     payload: JobCreateRequest,
-    principal: CurrentPrincipal,
+    principal: WritePrincipal,
     session: DbSession,
 ) -> JobResponse:
     """Create a job from pasted text.
@@ -64,7 +64,7 @@ async def create_job(
     ),
 )
 async def upload_job(
-    principal: CurrentPrincipal,
+    principal: WritePrincipal,
     session: DbSession,
     title: Annotated[str, Form()],
     file: Annotated[UploadFile, File()],
@@ -103,7 +103,7 @@ async def upload_job(
 )
 async def read_job(
     job_id: uuid.UUID,
-    principal: CurrentPrincipal,
+    principal: ReadPrincipal,
     session: DbSession,
 ) -> JobResponse:
     """Read one job.

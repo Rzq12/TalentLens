@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Literal
+from typing import Literal, cast
 
 import structlog
 
@@ -80,4 +80,7 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     Returns:
         A bound logger with the module name pre-attached.
     """
-    return structlog.get_logger(name)
+    # `structlog.get_logger` is annotated as returning Any because the concrete
+    # type depends on the configured wrapper class. We pin that wrapper to
+    # `stdlib.BoundLogger` in `configure_logging`, so the cast is sound.
+    return cast("structlog.stdlib.BoundLogger", structlog.get_logger(name))

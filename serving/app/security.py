@@ -8,8 +8,9 @@ who is making a request, and it reads that exclusively from a verified token.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 
 import jwt
 from fastapi import Depends, Request
@@ -112,7 +113,9 @@ def _extract_bearer_token(request: Request) -> str:
         raise AuthenticationError()
     scheme, _, token = header.partition(" ")
     if scheme.lower() != BEARER_PREFIX or not token.strip():
-        logger.warning("auth_bad_scheme", scheme=scheme)
+        # Truncate: the scheme is attacker-controlled and unbounded, and an
+        # unbounded value written to logs is a flooding and injection vector.
+        logger.warning("auth_bad_scheme", scheme=scheme[:32])
         raise AuthenticationError()
     return token.strip()
 
@@ -133,3 +136,51 @@ async def current_principal(request: Request) -> Principal:
 
 
 CurrentPrincipal = Annotated[Principal, Depends(current_principal)]
+
+# Roles permitted to ingest documents and manage job descriptions. Read-only
+# roles (`viewer`, `auditor`) are deliberately excluded from write paths.
+WRITE_ROLES: Final = ("owner", "admin", "recruiter")
+READ_ROLES: Final = ("owner", "admin", "recruiter", "hiring_manager", "auditor", "viewer")
+
+
+def require_roles(*allowed: str) -> Callable[[Principal], Awaitable[Principal]]:
+    """Build a dependency that admits only principals holding one of `allowed`.
+
+    Authentication alone is not authorization. Without this, any validly signed
+    token — regardless of the roles it carries — reaches every endpoint, and
+    the `roles` claim is decorative.
+
+    Args:
+        *allowed: Role names, any one of which grants access.
+
+    Returns:
+        A FastAPI dependency yielding the principal when permitted.
+    """
+
+    async def _guard(principal: CurrentPrincipal) -> Principal:
+        """Admit the caller only if they hold a permitted role.
+
+        Args:
+            principal: The verified caller.
+
+        Returns:
+            The same principal, unchanged.
+
+        Raises:
+            AuthorizationError: If the caller holds none of the allowed roles.
+        """
+        if not set(allowed) & set(principal.roles):
+            logger.warning(
+                "authorization_denied",
+                user_id=str(principal.user_id),
+                tenant_id=str(principal.tenant_id),
+                required=list(allowed),
+            )
+            raise AuthorizationError()
+        return principal
+
+    return _guard
+
+
+WritePrincipal = Annotated[Principal, Depends(require_roles(*WRITE_ROLES))]
+ReadPrincipal = Annotated[Principal, Depends(require_roles(*READ_ROLES))]

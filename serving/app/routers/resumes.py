@@ -17,7 +17,7 @@ from app.schemas.ingestion import (
     ResumeSummary,
     ResumeUploadResponse,
 )
-from app.security import CurrentPrincipal
+from app.security import ReadPrincipal, WritePrincipal
 from app.services.ingestion import ingest_resume
 from app.services.storage import get_object_store
 from app.utils.upload import read_upload_bounded
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/resumes", tags=["resumes"])
     ),
 )
 async def upload_resume(
-    principal: CurrentPrincipal,
+    principal: WritePrincipal,
     session: DbSession,
     file: Annotated[UploadFile, File()],
 ) -> ResumeUploadResponse:
@@ -80,7 +80,7 @@ async def upload_resume(
     description="Returns the calling tenant's most recent resumes, newest first.",
 )
 async def list_resumes(
-    principal: CurrentPrincipal,
+    principal: ReadPrincipal,
     session: DbSession,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     before: Annotated[
@@ -113,7 +113,8 @@ async def list_resumes(
         )
         for row in rows
     ]
-    next_cursor = items[-1].created_at.isoformat() if items else None
+    exhausted = len(items) < limit
+    next_cursor = None if exhausted or not items else items[-1].created_at.isoformat()
     return ResumeListResponse(items=items, count=len(items), next_cursor=next_cursor)
 
 
@@ -128,7 +129,7 @@ async def list_resumes(
 )
 async def read_resume(
     document_id: uuid.UUID,
-    principal: CurrentPrincipal,
+    principal: ReadPrincipal,
     session: DbSession,
 ) -> ResumeDetailResponse:
     """Read one resume.

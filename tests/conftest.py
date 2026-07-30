@@ -38,6 +38,21 @@ def _test_environment() -> Iterator[None]:
             os.environ[key] = value
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter() -> Iterator[None]:
+    """Clear rate-limit state around every test.
+
+    The limiter is process-global by design, so without this one test's
+    requests silently consume the next test's budget and unrelated cases fail
+    with 429 depending on execution order.
+    """
+    from app.main import reset_rate_limiter
+
+    reset_rate_limiter()
+    yield
+    reset_rate_limiter()
+
+
 @pytest.fixture
 def tenant_id() -> uuid.UUID:
     return uuid.UUID("11111111-1111-1111-1111-111111111111")

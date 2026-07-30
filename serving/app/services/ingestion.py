@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.config import Settings, get_settings
 from app.exceptions import (
@@ -119,7 +120,10 @@ async def ingest_resume(
         )
         return IngestionOutcome(document=existing, deduplicated=True)
 
-    parsed = parse_document(content, media_type)
+    # PDF/DOCX parsing is CPU-bound. Running it inline would pin the event
+    # loop for the duration and stall every concurrent request — a failure
+    # mode this project has already paid for once.
+    parsed = await run_in_threadpool(parse_document, content, media_type)
     safe_name = sanitize_filename(filename)
     storage_key = build_storage_key(principal.tenant_id, digest, safe_name)
     await store.put(storage_key, content, media_type)
@@ -238,7 +242,7 @@ async def create_job_from_upload(
         DocumentParseError: If the document is structurally unreadable.
     """
     media_type = validate_upload(content, settings)
-    parsed = parse_document(content, media_type)
+    parsed = await run_in_threadpool(parse_document, content, media_type)
     return await create_job_from_text(
         session=session,
         principal=principal,
