@@ -1,0 +1,53 @@
+# Normalize line endings so a Windows working tree and a Linux CI runner
+# agree on file content. Without this, CRLF checkouts cause spurious diffs
+# and can break shell scripts executed in CI.
+* text=auto eol=lf
+
+# Explicit text types
+*.py      text eol=lf diff=python
+*.pyi     text eol=lf diff=python
+*.toml    text eol=lf
+*.cfg     text eol=lf
+*.ini     text eol=lf
+*.md      text eol=lf diff=markdown
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.json    text eol=lf
+*.sql     text eol=lf
+*.sh      text eol=lf
+*.ts      text eol=lf
+*.tsx     text eol=lf
+*.js      text eol=lf
+*.jsx     text eol=lf
+*.css     text eol=lf
+*.html    text eol=lf diff=html
+.env.example text eol=lf
+Dockerfile text eol=lf
+
+# Windows-only scripts keep CRLF
+*.bat     text eol=crlf
+*.ps1     text eol=crlf
+
+# Binary — never diff, never normalize
+*.pdf     binary
+*.docx    binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.woff    binary
+*.woff2   binary
+*.pt      binary
+*.pth     binary
+*.onnx    binary
+*.safetensors binary
+
+# Collapse lockfiles and generated output in PR diffs
+*.lock          linguist-generated=true -diff
+uv.lock         linguist-generated=true -diff
+poetry.lock     linguist-generated=true -diff
+package-lock.json linguist-generated=true -diff
+
+# Keep test fixtures out of language statistics
+tests/fixtures/** linguist-vendored=true

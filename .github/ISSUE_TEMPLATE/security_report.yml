@@ -1,0 +1,49 @@
+name: Security or compliance concern
+description: Report a vulnerability, data-handling defect, or fairness risk
+title: "security: "
+labels: ["security", "priority-high"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not include exploit payloads, live credentials, or real candidate
+        data.** If this is an exploitable vulnerability in a deployed instance,
+        prefer a GitHub private security advisory over a public issue.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - tenant isolation / data leak
+        - authentication or authorization bypass
+        - prompt injection via document content
+        - secret or credential exposure
+        - PII handling or retention
+        - fairness / adverse impact
+        - dependency vulnerability
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is the weakness, and what could an attacker or affected person do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Who is affected, and how badly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Suggested mitigation
+      description: Optional. Leave blank if unsure.

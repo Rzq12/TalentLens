@@ -1,0 +1,55 @@
+name: Feature request
+description: Propose new capability or a change to existing behaviour
+title: "feat: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can a user not do today? Describe the problem, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Testable statements. These become the RED tests.
+      placeholder: |
+        - Uploading a scanned PDF returns parse_status "low_yield"
+        - The response flags needs_ocr true
+    validations:
+      required: true
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Which phase does this belong to
+      options:
+        - "Phase 1 - ingestion (current)"
+        - "Phase 2 - semantic search"
+        - "Phase 3 - job descriptions and rubric"
+        - "Phase 4+ - scoring and insights"
+        - unscheduled
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: compliance
+    attributes:
+      label: Compliance check
+      description: This product makes employment decisions. Confirm before proposing.
+      options:
+        - label: This does not introduce automated rejection or advancement
+          required: true
+        - label: Any new scoring signal remains decomposable and evidence-cited
+        - label: Any new personal data processed has a lawful basis and retention rule

@@ -1,0 +1,71 @@
+name: Bug report
+description: Something behaves incorrectly
+title: "fix: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste real candidate data, resumes, tokens, or connection
+        strings. Redact before submitting.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The actual behaviour, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: A minimal, deterministic sequence. A failing test is ideal.
+      placeholder: |
+        1. POST /api/v1/resumes with a two-column PDF
+        2. GET /api/v1/resumes/{id}
+        3. `text` field is empty
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Request id, error envelope, stack trace, or failing test output.
+      render: text
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - auth / identity
+        - resume upload
+        - resume parser
+        - job descriptions
+        - persistence / migrations
+        - CI / tooling
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "critical - data loss, tenant leak, or security issue"
+        - "high - core flow broken"
+        - "medium - workaround exists"
+        - "low - cosmetic"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit SHA
+    validations:
+      required: true

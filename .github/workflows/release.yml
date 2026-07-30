@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  verify:
+    name: Verify tagged commit
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: talentlens_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5433/talentlens_test
+      JWT_SECRET: ci-only-secret-not-used-outside-github-actions
+      JWT_ISSUER: https://test.local/auth/v1
+      JWT_AUDIENCE: authenticated
+      STORAGE_BACKEND: memory
+      ENVIRONMENT: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install
+        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
+
+      - name: Gate on the full suite
+        run: |
+          ruff check .
+          mypy serving/app
+          pytest tests/ -q --cov=serving/app
+
+      - name: Confirm the tag matches the project version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PROJECT="$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          echo "tag=$TAG project=$PROJECT"
+          if [ "$TAG" != "$PROJECT" ]; then
+            echo "::error::Tag $TAG does not match pyproject version $PROJECT"
+            exit 1
+          fi
+
+  publish:
+    name: Publish GitHub release
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build distribution
+        run: python -m pip install --upgrade pip build && python -m build
+
+      - name: Generate release notes from Conventional Commits
+        id: notes
+        run: |
+          PREV="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          RANGE="${PREV:+$PREV..}${GITHUB_REF_NAME}"
+          {
+            echo "notes<<EOF"
+            echo "### Features"
+            git log "$RANGE" --no-merges --pretty="- %s" | grep -E '^- feat' || echo "- none"
+            echo ""
+            echo "### Fixes"
+            git log "$RANGE" --no-merges --pretty="- %s" | grep -E '^- fix' || echo "- none"
+            echo ""
+            echo "### Other"
+            git log "$RANGE" --no-merges --pretty="- %s" | grep -vE '^- (feat|fix)' || echo "- none"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.notes.outputs.notes }}
+          files: dist/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
