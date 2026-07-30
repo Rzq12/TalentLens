@@ -52,7 +52,7 @@ class UnsupportedMediaTypeError(TalentLensError):
     """Raised when an upload's real content type is not on the allowlist."""
 
     error_code: ClassVar[str] = "UNSUPPORTED_MEDIA_TYPE"
-    status_code: ClassVar[int] = 422
+    status_code: ClassVar[int] = 415
     default_message: ClassVar[str] = "File must be a PDF or DOCX document."
 
 

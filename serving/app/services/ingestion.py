@@ -18,12 +18,15 @@ from app.exceptions import (
     PayloadTooLargeError,
     UnsupportedMediaTypeError,
 )
+from app.logging import get_logger
 from app.models import Job, ResumeDocument, ResumeVersion
 from app.repositories.ingestion import JobRepository, ResumeRepository
 from app.security import Principal
 from app.services.parser import parse_document
 from app.services.storage import ObjectStore, build_storage_key
 from app.utils.parsing import content_sha256, detect_media_type, sanitize_filename
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +111,12 @@ async def ingest_resume(
 
     existing = await repo.find_by_hash(principal.tenant_id, digest)
     if existing is not None:
+        logger.info(
+            "resume_deduplicated",
+            document_id=str(existing.id),
+            tenant_id=str(principal.tenant_id),
+            sha256=digest,
+        )
         return IngestionOutcome(document=existing, deduplicated=True)
 
     parsed = parse_document(content, media_type)
@@ -148,6 +157,15 @@ async def ingest_resume(
     )
 
     await repo.add(document, version)
+    logger.info(
+        "resume_ingested",
+        document_id=str(document.id),
+        tenant_id=str(principal.tenant_id),
+        media_type=media_type,
+        size_bytes=len(content),
+        parse_status=parsed.parse_status,
+        needs_ocr=parsed.needs_ocr,
+    )
     return IngestionOutcome(document=document, deduplicated=False)
 
 

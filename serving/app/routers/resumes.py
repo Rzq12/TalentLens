@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, File, UploadFile, status
+from fastapi import APIRouter, File, Query, UploadFile, status
 
 from app.db import DbSession
 from app.exceptions import ResourceNotFoundError
@@ -19,6 +20,7 @@ from app.schemas.ingestion import (
 from app.security import CurrentPrincipal
 from app.services.ingestion import ingest_resume
 from app.services.storage import get_object_store
+from app.utils.upload import read_upload_bounded
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
@@ -49,7 +51,7 @@ async def upload_resume(
     Returns:
         An acknowledgement describing the stored document.
     """
-    content = await file.read()
+    content = await read_upload_bounded(file)
     outcome = await ingest_resume(
         session=session,
         store=get_object_store(),
@@ -80,19 +82,26 @@ async def upload_resume(
 async def list_resumes(
     principal: CurrentPrincipal,
     session: DbSession,
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    before: Annotated[
+        datetime | None,
+        Query(description="Cursor: return items created before this ISO 8601 timestamp."),
+    ] = None,
 ) -> ResumeListResponse:
     """List the caller's resumes.
 
     Args:
         principal: Verified caller.
         session: Database session.
-        limit: Maximum rows to return.
+        limit: Maximum rows to return (1–200).
+        before: Cursor for pagination — only return items created before this time.
 
     Returns:
         A page of resume summaries, scoped to the caller's tenant.
     """
-    rows = await ResumeRepository(session).list_for_tenant(principal.tenant_id, limit)
+    rows = await ResumeRepository(session).list_for_tenant(
+        principal.tenant_id, limit, before=before,
+    )
     items = [
         ResumeSummary(
             document_id=row.id,
@@ -104,7 +113,8 @@ async def list_resumes(
         )
         for row in rows
     ]
-    return ResumeListResponse(items=items, count=len(items))
+    next_cursor = items[-1].created_at.isoformat() if items else None
+    return ResumeListResponse(items=items, count=len(items), next_cursor=next_cursor)
 
 
 @router.get(

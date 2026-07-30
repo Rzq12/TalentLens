@@ -16,6 +16,9 @@ from fastapi import Depends, Request
 
 from app.config import Settings, get_settings
 from app.exceptions import AuthenticationError, AuthorizationError
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 BEARER_PREFIX = "bearer"
 
@@ -77,12 +80,14 @@ def decode_access_token(token: str, settings: Settings | None = None) -> Princip
             options={"require": ["exp", "sub"]},
         )
     except jwt.PyJWTError as err:
+        logger.warning("auth_token_rejected", reason=type(err).__name__)
         raise AuthenticationError() from err
 
     try:
         user_id = uuid.UUID(str(claims["sub"]))
         tenant_id = uuid.UUID(str(claims["tenant_id"]))
     except (KeyError, ValueError) as err:
+        logger.warning("auth_claims_invalid", reason=str(err))
         raise AuthenticationError() from err
 
     raw_roles = claims.get("roles") or ()
@@ -107,6 +112,7 @@ def _extract_bearer_token(request: Request) -> str:
         raise AuthenticationError()
     scheme, _, token = header.partition(" ")
     if scheme.lower() != BEARER_PREFIX or not token.strip():
+        logger.warning("auth_bad_scheme", scheme=scheme)
         raise AuthenticationError()
     return token.strip()
 

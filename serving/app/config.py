@@ -9,11 +9,14 @@ rather than silently fall back to something insecure.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+MIN_JWT_SECRET_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -62,6 +65,28 @@ class Settings(BaseSettings):
     cors_allow_origins: tuple[str, ...] = ("http://localhost:5173",)
 
     log_level: str = "INFO"
+
+    @model_validator(mode="after")
+    def _enforce_production_secrets(self) -> Self:
+        """Reject weak JWT secrets in production.
+
+        A short secret drastically reduces the key space an attacker must
+        search. In production this is never acceptable; in development and test
+        convenience outweighs the risk.
+
+        Returns:
+            The validated settings instance.
+
+        Raises:
+            ValueError: If the JWT secret is too short for production.
+        """
+        if self.environment == "production" and len(self.jwt_secret) < MIN_JWT_SECRET_LENGTH:
+            msg = (
+                f"JWT_SECRET must be at least {MIN_JWT_SECRET_LENGTH} characters "
+                f"in production (got {len(self.jwt_secret)})."
+            )
+            raise ValueError(msg)
+        return self
 
 
 @lru_cache(maxsize=1)

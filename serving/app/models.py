@@ -72,7 +72,7 @@ class ResumeDocument(TimestampMixin, Base):
     needs_ocr: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     versions: Mapped[list[ResumeVersion]] = relationship(
-        back_populates="document", cascade="all, delete-orphan", lazy="selectin"
+        back_populates="document", cascade="all, delete-orphan", lazy="noload"
     )
 
 

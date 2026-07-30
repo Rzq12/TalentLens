@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import Job, ResumeDocument, ResumeVersion
 
@@ -55,19 +57,27 @@ class ResumeRepository:
         Returns:
             The document, or None if it does not exist for this tenant.
         """
-        stmt = select(ResumeDocument).where(
-            ResumeDocument.tenant_id == tenant_id, ResumeDocument.id == document_id
+        stmt = (
+            select(ResumeDocument)
+            .where(ResumeDocument.tenant_id == tenant_id, ResumeDocument.id == document_id)
+            .options(selectinload(ResumeDocument.versions))
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_tenant(
-        self, tenant_id: uuid.UUID, limit: int = 50
+        self,
+        tenant_id: uuid.UUID,
+        limit: int = 50,
+        *,
+        before: datetime | None = None,
     ) -> Sequence[ResumeDocument]:
         """Return the tenant's most recent documents.
 
         Args:
             tenant_id: Owning tenant.
             limit: Maximum rows to return.
+            before: If provided, only return documents created before this time
+                (cursor-based pagination).
 
         Returns:
             Documents ordered newest first.
@@ -78,6 +88,8 @@ class ResumeRepository:
             .order_by(ResumeDocument.created_at.desc())
             .limit(limit)
         )
+        if before is not None:
+            stmt = stmt.where(ResumeDocument.created_at < before)
         return (await self._session.execute(stmt)).scalars().all()
 
     async def latest_version(

@@ -27,6 +27,9 @@ from app.exceptions import (
     EmptyDocumentError,
     UnsupportedMediaTypeError,
 )
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 PARSER_VERSION = "pymupdf-1.24+python-docx-1.1/v1"
 PAGE_SEPARATOR = "\n\n"
@@ -103,6 +106,14 @@ def _assemble(pages: list[str], media_type: str) -> ParsedDocument:
     total_chars = sum(len(p) for p in pages)
     thin = total_chars < MIN_CHARS_PER_PAGE_FOR_TEXT_LAYER * max(len(pages), 1)
 
+    if thin:
+        logger.info(
+            "parse_low_yield",
+            page_count=len(pages),
+            total_chars=total_chars,
+            needs_ocr=True,
+        )
+
     return ParsedDocument(
         text=full_text,
         pages=tuple(parts),
@@ -129,6 +140,7 @@ def _parse_pdf(content: bytes) -> ParsedDocument:
         with fitz.open(stream=content, filetype="pdf") as document:
             pages = [page.get_text("text") for page in document]
     except Exception as err:  # noqa: BLE001 - normalized to a domain error
+        logger.warning("parse_pdf_failed", error=str(err), error_type=type(err).__name__)
         raise DocumentParseError("The PDF could not be opened.") from err
 
     if not pages:
@@ -162,6 +174,7 @@ def _parse_docx(content: bytes) -> ParsedDocument:
         KeyError,
         OSError,
     ) as err:
+        logger.warning("parse_docx_failed", error=str(err), error_type=type(err).__name__)
         raise DocumentParseError("The DOCX could not be opened.") from err
 
     return _assemble(["\n".join(paragraphs)], DOCX_MIME)

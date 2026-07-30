@@ -112,7 +112,7 @@ def test_exception_hierarchy_exposes_stable_error_codes():
 
     expected = {
         exc.DocumentParseError: ("DOCUMENT_PARSE_FAILED", 422),
-        exc.UnsupportedMediaTypeError: ("UNSUPPORTED_MEDIA_TYPE", 422),
+        exc.UnsupportedMediaTypeError: ("UNSUPPORTED_MEDIA_TYPE", 415),
         exc.PayloadTooLargeError: ("PAYLOAD_TOO_LARGE", 413),
         exc.AuthenticationError: ("UNAUTHENTICATED", 401),
         exc.AuthorizationError: ("FORBIDDEN", 403),
