@@ -24,6 +24,7 @@ from app.models import Job, ResumeDocument, ResumeVersion
 from app.repositories.ingestion import JobRepository, ResumeRepository
 from app.security import Principal
 from app.services.parser import parse_document
+from app.services.sanitize import sanitize_document
 from app.services.storage import ObjectStore, build_storage_key
 from app.utils.parsing import content_sha256, detect_media_type, sanitize_filename
 
@@ -41,6 +42,8 @@ class IngestionOutcome:
 
     document: ResumeDocument
     deduplicated: bool
+    injection_risk_score: float = 0.0
+    quarantined: bool = False
 
 
 def validate_upload(content: bytes, settings: Settings | None = None) -> str:
@@ -118,12 +121,24 @@ async def ingest_resume(
             tenant_id=str(principal.tenant_id),
             sha256=digest,
         )
-        return IngestionOutcome(document=existing, deduplicated=True)
+        prior = await repo.latest_version(principal.tenant_id, existing.id)
+        return IngestionOutcome(
+            document=existing,
+            deduplicated=True,
+            injection_risk_score=prior.injection_risk_score if prior else 0.0,
+            quarantined=prior.quarantined if prior else False,
+        )
 
     # PDF/DOCX parsing is CPU-bound. Running it inline would pin the event
     # loop for the duration and stall every concurrent request — a failure
     # mode this project has already paid for once.
     parsed = await run_in_threadpool(parse_document, content, media_type)
+
+    # Resume text is hostile input. Strip what is provably invisible before any
+    # of it is stored, and quarantine the document if what remains looks like an
+    # attempt to steer a downstream model.
+    sanitized = sanitize_document(parsed)
+
     safe_name = sanitize_filename(filename)
     storage_key = build_storage_key(principal.tenant_id, digest, safe_name)
     await store.put(storage_key, content, media_type)
@@ -147,8 +162,8 @@ async def ingest_resume(
         tenant_id=principal.tenant_id,
         document_id=document.id,
         version=1,
-        extracted_text=parsed.text,
-        text_sha256=content_sha256(parsed.text.encode("utf-8")),
+        extracted_text=sanitized.text,
+        text_sha256=content_sha256(sanitized.text.encode("utf-8")),
         page_offsets=[
             {
                 "page": page.page,
@@ -158,6 +173,9 @@ async def ingest_resume(
             for page in parsed.pages
         ],
         parser_version=parsed.parser_version,
+        sanitization_report=sanitized.to_report(),
+        injection_risk_score=sanitized.injection_risk_score,
+        quarantined=sanitized.should_quarantine,
     )
 
     await repo.add(document, version)
@@ -169,8 +187,15 @@ async def ingest_resume(
         size_bytes=len(content),
         parse_status=parsed.parse_status,
         needs_ocr=parsed.needs_ocr,
+        injection_risk_score=sanitized.injection_risk_score,
+        quarantined=sanitized.should_quarantine,
     )
-    return IngestionOutcome(document=document, deduplicated=False)
+    return IngestionOutcome(
+        document=document,
+        deduplicated=False,
+        injection_risk_score=sanitized.injection_risk_score,
+        quarantined=sanitized.should_quarantine,
+    )
 
 
 async def create_job_from_text(

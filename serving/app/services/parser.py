@@ -47,6 +47,30 @@ ParseStatus = Literal["ok", "low_yield", "failed"]
 
 
 @dataclass(frozen=True, slots=True)
+class TextSpan:
+    """One styled run of text with the geometry needed to judge visibility.
+
+    The sanitizer cannot detect white-on-white or off-canvas text from a plain
+    string, so these attributes are extracted in the same pass as the text.
+
+    Attributes:
+        text: The span's characters.
+        page: One-based page number.
+        size: Font size in points.
+        color: Packed sRGB integer as reported by the PDF, or None if unknown.
+        bbox: (x0, y0, x1, y1) in page coordinates, or None if unknown.
+        page_rect: The page's own (x0, y0, x1, y1), for off-canvas comparison.
+    """
+
+    text: str
+    page: int
+    size: float
+    color: int | None
+    bbox: tuple[float, float, float, float] | None
+    page_rect: tuple[float, float, float, float] | None
+
+
+@dataclass(frozen=True, slots=True)
 class ParsedPage:
     """One page of extracted text, anchored into the whole-document string.
 
@@ -72,6 +96,8 @@ class ParsedDocument:
         pages: Per-page slices with exact offsets.
         page_count: Number of pages found.
         media_type: The media type actually parsed.
+        spans: Styled runs with geometry, consumed by the sanitizer.
+        metadata: Document metadata, an injection surface in its own right.
         parser_version: Provenance for replay.
         needs_ocr: True when the text layer is too thin to trust.
         parse_status: "ok" when text was recovered, "low_yield" when OCR is needed.
@@ -86,9 +112,16 @@ class ParsedDocument:
     needs_ocr: bool = False
     parse_status: ParseStatus = "ok"
     warnings: tuple[str, ...] = field(default=())
+    spans: tuple[TextSpan, ...] = field(default=())
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
-def _assemble(pages: list[str], media_type: str) -> ParsedDocument:
+def _assemble(
+    pages: list[str],
+    media_type: str,
+    spans: tuple[TextSpan, ...] = (),
+    metadata: dict[str, str] | None = None,
+) -> ParsedDocument:
     """Join page texts and compute exact offsets for each page.
 
     Offsets are derived from the same concatenation that produces `text`, so
@@ -98,6 +131,8 @@ def _assemble(pages: list[str], media_type: str) -> ParsedDocument:
     Args:
         pages: Per-page extracted text, in order.
         media_type: The media type that was parsed.
+        spans: Styled runs with geometry, when the format exposes them.
+        metadata: Document metadata, when the format exposes it.
 
     Returns:
         The assembled document.
@@ -129,7 +164,56 @@ def _assemble(pages: list[str], media_type: str) -> ParsedDocument:
         media_type=media_type,
         needs_ocr=thin,
         parse_status="low_yield" if thin else "ok",
+        spans=spans,
+        metadata=metadata or {},
     )
+
+
+def _extract_spans(page: fitz.Page, page_number: int) -> list[TextSpan]:
+    """Collect styled runs and their geometry from one PDF page.
+
+    Uses the structured `dict` extraction rather than plain text so the
+    sanitizer can see font size, colour, and position — the attributes that
+    distinguish text a human can read from text hidden for a model to find.
+
+    Args:
+        page: The PyMuPDF page.
+        page_number: One-based page number.
+
+    Returns:
+        Every non-empty span on the page.
+    """
+    rect = page.rect
+    page_rect = (rect.x0, rect.y0, rect.x1, rect.y1)
+    collected: list[TextSpan] = []
+
+    payload = page.get_text("dict")
+    for block in payload.get("blocks", ()):
+        for line in block.get("lines", ()):
+            for span in line.get("spans", ()):
+                text = str(span.get("text", ""))
+                if not text.strip():
+                    continue
+                raw_bbox = span.get("bbox")
+                bbox: tuple[float, float, float, float] | None = None
+                if raw_bbox is not None and len(raw_bbox) == 4:
+                    bbox = (
+                        float(raw_bbox[0]),
+                        float(raw_bbox[1]),
+                        float(raw_bbox[2]),
+                        float(raw_bbox[3]),
+                    )
+                collected.append(
+                    TextSpan(
+                        text=text,
+                        page=page_number,
+                        size=float(span.get("size", 0.0)),
+                        color=span.get("color"),
+                        bbox=bbox,
+                        page_rect=page_rect,
+                    )
+                )
+    return collected
 
 
 def _parse_pdf(content: bytes) -> ParsedDocument:
@@ -157,8 +241,9 @@ def _parse_pdf(content: bytes) -> ParsedDocument:
                 )
 
             pages: list[str] = []
+            spans: list[TextSpan] = []
             total_chars = 0
-            for page in document:
+            for index, page in enumerate(document, start=1):
                 text = page.get_text("text")
                 total_chars += len(text)
                 if total_chars > MAX_EXTRACTED_CHARS:
@@ -169,6 +254,10 @@ def _parse_pdf(content: bytes) -> ParsedDocument:
                         "The PDF expands to more text than this service will process."
                     )
                 pages.append(text)
+                spans.extend(_extract_spans(page, index))
+            metadata = {
+                str(k): str(v) for k, v in (document.metadata or {}).items() if v
+            }
     except DocumentParseError:
         raise
     except Exception as err:  # noqa: BLE001 - normalized to a domain error
@@ -177,7 +266,7 @@ def _parse_pdf(content: bytes) -> ParsedDocument:
 
     if not pages:
         raise DocumentParseError("The PDF contains no pages.")
-    return _assemble(pages, "application/pdf")
+    return _assemble(pages, "application/pdf", tuple(spans), metadata)
 
 
 def _parse_docx(content: bytes) -> ParsedDocument:

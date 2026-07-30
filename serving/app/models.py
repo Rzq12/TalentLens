@@ -13,6 +13,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -110,6 +111,16 @@ class ResumeVersion(TimestampMixin, Base):
         JSONB, nullable=False, default=list
     )
     parser_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Sanitization provenance. Stored per version because a re-parse under a
+    # newer sanitizer must not overwrite what an earlier decision was based on.
+    sanitization_report: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    injection_risk_score: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    quarantined: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     document: Mapped[ResumeDocument] = relationship(back_populates="versions")
 

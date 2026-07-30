@@ -70,6 +70,8 @@ async def upload_resume(
         parse_status=document.parse_status,
         needs_ocr=document.needs_ocr,
         deduplicated=outcome.deduplicated,
+        injection_risk_score=outcome.injection_risk_score,
+        quarantined=outcome.quarantined,
     )
 
 
@@ -151,6 +153,11 @@ async def read_resume(
         raise ResourceNotFoundError()
 
     version = await repo.latest_version(principal.tenant_id, document_id)
+
+    # A quarantined document must not hand its text to any consumer until a
+    # human has reviewed the findings.
+    visible_text = "" if version is None or version.quarantined else version.extracted_text
+
     return ResumeDetailResponse(
         document_id=document.id,
         filename=document.filename_sanitized,
@@ -161,6 +168,9 @@ async def read_resume(
         parse_status=document.parse_status,
         needs_ocr=document.needs_ocr,
         parser_version=document.parser_version,
-        text=version.extracted_text if version else "",
+        text=visible_text,
+        injection_risk_score=version.injection_risk_score if version else 0.0,
+        quarantined=version.quarantined if version else False,
+        sanitization_report=version.sanitization_report if version else {},
         created_at=document.created_at,
     )

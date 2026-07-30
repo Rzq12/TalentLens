@@ -26,6 +26,14 @@ class ResumeUploadResponse(BaseModel):
         default=False,
         description="True when identical bytes were already stored for this tenant.",
     )
+    injection_risk_score: float = Field(
+        default=0.0,
+        description="Deterministic prompt-injection risk in [0.0, 1.0].",
+    )
+    quarantined: bool = Field(
+        default=False,
+        description="True when the document needs human review before any further use.",
+    )
 
 
 class ResumeDetailResponse(BaseModel):
@@ -42,7 +50,15 @@ class ResumeDetailResponse(BaseModel):
     parse_status: str
     needs_ocr: bool
     parser_version: str
-    text: str = Field(description="Extracted text of the latest parsed version.")
+    text: str = Field(
+        description=(
+            "Sanitized text of the latest parsed version. Empty when the "
+            "document is quarantined."
+        )
+    )
+    injection_risk_score: float = 0.0
+    quarantined: bool = False
+    sanitization_report: dict[str, object] = Field(default_factory=dict)
     created_at: datetime
 
 
