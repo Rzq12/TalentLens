@@ -151,6 +151,46 @@ async def db_client() -> AsyncIterator[Any]:
     await dispose_engine()
 
 
+class _SchemaInspector:
+    """Runs a synchronous callable against a fresh connection.
+
+    `run_sync` lives on `AsyncConnection`, not `AsyncEngine`, so tests that want
+    to reflect the schema need a connection opened for them. Wrapping that here
+    keeps each test to a single readable call.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        self._engine = engine
+
+    async def run_sync(self, fn: Any, *args: Any) -> Any:
+        """Execute `fn(connection, *args)` on a new connection."""
+        async with self._engine.connect() as connection:
+            return await connection.run_sync(fn, *args)
+
+
+@pytest.fixture
+async def clean_database() -> AsyncIterator[Any]:
+    """Yield a schema inspector over a database with no tables at all.
+
+    Migration tests must start from genuinely empty — including no
+    `alembic_version` row — otherwise an upgrade is a no-op and proves nothing.
+    """
+    from sqlalchemy import text
+
+    from app.db import Base, dispose_engine, get_engine
+
+    async def _wipe() -> None:
+        engine = get_engine()
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.drop_all)
+            await connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
+
+    await _wipe()
+    yield _SchemaInspector(get_engine())
+    await _wipe()
+    await dispose_engine()
+
+
 @pytest.fixture
 def minimal_pdf_bytes() -> bytes:
     """A tiny but structurally valid single-page PDF containing known text."""
