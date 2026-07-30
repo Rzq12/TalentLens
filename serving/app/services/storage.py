@@ -12,7 +12,10 @@ from typing import Protocol
 
 from app.config import Settings, get_settings
 from app.exceptions import StorageError
+from app.logging import get_logger
 from app.utils.parsing import sanitize_filename
+
+logger = get_logger(__name__)
 
 
 class ObjectStore(Protocol):
@@ -96,14 +99,25 @@ def get_object_store(settings: Settings | None = None) -> ObjectStore:
         The adapter selected by `Settings.storage_backend`.
 
     Raises:
-        StorageError: If the Supabase backend is selected but not configured.
+        StorageError: If the Supabase backend is selected but not configured,
+            or if the memory backend is used in production.
     """
-    global _STORE
+    global _STORE  # noqa: PLW0603
     cfg = settings or get_settings()
     if cfg.storage_backend == "supabase":
         if not (cfg.supabase_url and cfg.supabase_service_key):
             raise StorageError("Supabase storage selected but not configured.")
         raise StorageError("Supabase adapter is not implemented in Phase 1.")
+    if cfg.environment == "production":
+        raise StorageError(
+            "InMemoryObjectStore cannot be used in production. "
+            "Set STORAGE_BACKEND to a durable adapter (e.g. 'supabase')."
+        )
     if _STORE is None:
         _STORE = InMemoryObjectStore()
+        logger.warning(
+            "storage_backend_memory",
+            msg="Using in-memory object store — data is NOT durable.",
+            environment=cfg.environment,
+        )
     return _STORE

@@ -77,7 +77,7 @@ async def test_upload_rejects_a_disguised_executable(db_client, auth_headers):
         files={"file": ("payload.pdf", b"MZ\x90\x00" + b"\x00" * 64, "application/pdf")},
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 415
     assert response.json()["error"] == "UNSUPPORTED_MEDIA_TYPE"
 
 
@@ -87,6 +87,7 @@ async def test_upload_rejects_an_empty_file(db_client, auth_headers):
     )
 
     assert response.status_code == 422
+    assert response.json()["error"] == "EMPTY_DOCUMENT"
 
 
 async def test_upload_rejects_a_file_over_the_size_ceiling(db_client, auth_headers):

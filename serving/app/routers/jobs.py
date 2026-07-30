@@ -13,6 +13,7 @@ from app.repositories.ingestion import JobRepository
 from app.schemas.ingestion import JobCreateRequest, JobResponse
 from app.security import CurrentPrincipal
 from app.services.ingestion import create_job_from_text, create_job_from_upload
+from app.utils.upload import read_upload_bounded
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -84,7 +85,7 @@ async def upload_job(
     """
     if not title.strip():
         raise ValidationFailedError("Title must not be blank.")
-    content = await file.read()
+    content = await read_upload_bounded(file)
     job = await create_job_from_upload(
         session=session,
         principal=principal,

@@ -64,6 +64,10 @@ class ResumeListResponse(BaseModel):
 
     items: list[ResumeSummary] = Field(default_factory=list)
     count: int = 0
+    next_cursor: str | None = Field(
+        default=None,
+        description="Pass as `before` for the next page. Null when exhausted.",
+    )
 
 
 class JobCreateRequest(BaseModel):
