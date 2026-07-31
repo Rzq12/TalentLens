@@ -1,4 +1,4 @@
-"""ORM models for Phase 0-2.
+"""ORM models for Phase 0-3.
 
 Every tenant-scoped table carries `tenant_id` as the first filter column and is
 indexed on it. Content-addressed uniqueness on `(tenant_id, sha256)` is what
@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from pgvector.sqlalchemy import Vector
+from pgvector.sqlalchemy import HALFVEC, Vector
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -219,3 +221,112 @@ class Job(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     blind_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class RubricVersion(TimestampMixin, Base):
+    """One immutable-once-approved snapshot of the criteria for a job.
+
+    A rubric is the artifact a human signs off on, and every score is attributed
+    to the version it was computed against. Editing an approved rubric mints
+    version N+1 and leaves prior scores attributable to the criteria that
+    produced them, so `unique(job_id, version)` is what keeps "which criteria
+    was this candidate judged by" answerable.
+
+    ``content_hash`` fingerprints the full requirement set and is part of every
+    verdict cache key. It stays NULL while the rubric is a draft — a draft has
+    no frozen criteria to fingerprint.
+    """
+
+    __tablename__ = "rubric_versions"
+    __table_args__ = (
+        UniqueConstraint("job_id", "version", name="uq_rubric_versions_job_version"),
+        Index("ix_rubric_versions_tenant_job", "tenant_id", "job_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # A candidate failing a must-have cannot score above this, no matter how
+    # strong the rest of the match is. Stored per version so tightening the cap
+    # does not silently re-rank candidates scored under the old one.
+    must_have_fail_cap: Mapped[int] = mapped_column(Integer, nullable=False, default=40)
+    aggregation_formula_version: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="v1"
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    requirements: Mapped[list[Requirement]] = relationship(
+        back_populates="rubric_version",
+        cascade="all, delete-orphan",
+        lazy="noload",
+    )
+
+
+class Requirement(TimestampMixin, Base):
+    """One weighted criterion within a rubric version.
+
+    ``weight`` is ``numeric(5,4)`` rather than a float because normalized
+    weights must sum to exactly 1.0. Binary floats cannot represent tenths
+    exactly, so a float column would make that invariant unverifiable.
+
+    ``skill_id`` is nullable: the ESCO skill taxonomy it would point at is not
+    built yet, and requiring it would make every requirement uninsertable.
+    """
+
+    __tablename__ = "requirements"
+    __table_args__ = (
+        Index("ix_requirements_tenant_version", "tenant_id", "rubric_version_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    rubric_version_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("rubric_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, default="skill")
+    is_must_have: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    weight: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+
+    min_years: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
+    min_seniority: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # Reserved for taxonomy linking; the ESCO tables do not exist yet.
+    skill_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+
+    # Half precision because requirement counts are small and the extra recall
+    # from full precision is not worth doubling the index footprint. The HNSW
+    # index is created in the Alembic migration, not here.
+    embedding: Mapped[list[float] | None] = mapped_column(HALFVEC(1024), nullable=True)
+
+    rubric_version: Mapped[RubricVersion] = relationship(back_populates="requirements")
