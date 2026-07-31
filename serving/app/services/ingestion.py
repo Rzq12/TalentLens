@@ -22,7 +22,10 @@ from app.exceptions import (
 from app.logging import get_logger
 from app.models import Job, ResumeDocument, ResumeVersion
 from app.repositories.ingestion import JobRepository, ResumeRepository
+from app.repositories.search import ChunkRepository
 from app.security import Principal
+from app.services.embedding import get_embedding_service
+from app.services.indexing import index_resume_version
 from app.services.parser import parse_document
 from app.services.sanitize import sanitize_document
 from app.services.storage import ObjectStore, build_storage_key
@@ -179,6 +182,17 @@ async def ingest_resume(
     )
 
     await repo.add(document, version)
+
+    # Bridge to Phase 2: chunk, embed, and persist so search can find this resume.
+    # Quarantined versions are skipped inside index_resume_version.
+    chunk_repo = ChunkRepository(session)
+    embedder = get_embedding_service()
+    indexing_result = await index_resume_version(
+        version=version,
+        chunk_repo=chunk_repo,
+        embedder=embedder,
+    )
+
     logger.info(
         "resume_ingested",
         document_id=str(document.id),
@@ -189,6 +203,9 @@ async def ingest_resume(
         needs_ocr=parsed.needs_ocr,
         injection_risk_score=sanitized.injection_risk_score,
         quarantined=sanitized.should_quarantine,
+        chunks_created=indexing_result.chunks_created,
+        child_chunks=indexing_result.child_chunks,
+        parent_chunks=indexing_result.parent_chunks,
     )
     return IngestionOutcome(
         document=document,

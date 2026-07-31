@@ -94,27 +94,42 @@ class ChunkRepository:
         # Use raw SQL for pgvector operator support
         vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
 
-        where_clauses = ["tenant_id = :tenant_id", "embedding IS NOT NULL", "is_parent = false"]
-        params: dict[str, object] = {"tenant_id": str(tenant_id), "top_k": top_k}
+        params: dict[str, object] = {
+            "tenant_id": str(tenant_id),
+            "top_k": top_k,
+            "embedding": vec_str,
+        }
 
         if document_id is not None:
-            where_clauses.append("document_id = :document_id")
             params["document_id"] = str(document_id)
-
-        where_sql = " AND ".join(where_clauses)
-
-        query = text(f"""
-            SELECT id, tenant_id, resume_version_id, document_id,
-                   chunk_index, parent_chunk_id, section, content,
-                   page_from, page_to, start_char, end_char,
-                   token_count, embedding_model, embedding_version,
-                   1 - (embedding <=> :embedding::vector) AS score
-            FROM resume_chunks
-            WHERE {where_sql}
-            ORDER BY embedding <=> :embedding::vector
-            LIMIT :top_k
-        """)
-        params["embedding"] = vec_str
+            query = text("""
+                SELECT id, tenant_id, resume_version_id, document_id,
+                       chunk_index, parent_chunk_id, section, content,
+                       page_from, page_to, start_char, end_char,
+                       token_count, embedding_model, embedding_version,
+                       1 - (embedding <=> :embedding::vector) AS score
+                FROM resume_chunks
+                WHERE tenant_id = :tenant_id
+                  AND embedding IS NOT NULL
+                  AND is_parent = false
+                  AND document_id = :document_id
+                ORDER BY embedding <=> :embedding::vector
+                LIMIT :top_k
+            """)
+        else:
+            query = text("""
+                SELECT id, tenant_id, resume_version_id, document_id,
+                       chunk_index, parent_chunk_id, section, content,
+                       page_from, page_to, start_char, end_char,
+                       token_count, embedding_model, embedding_version,
+                       1 - (embedding <=> :embedding::vector) AS score
+                FROM resume_chunks
+                WHERE tenant_id = :tenant_id
+                  AND embedding IS NOT NULL
+                  AND is_parent = false
+                ORDER BY embedding <=> :embedding::vector
+                LIMIT :top_k
+            """)
 
         result = await self._session.execute(query, params)
         rows = result.fetchall()
@@ -164,11 +179,6 @@ class ChunkRepository:
         Returns:
             Chunks ordered by descending ts_rank_cd score.
         """
-        where_clauses = [
-            "tenant_id = :tenant_id",
-            "content_tsv IS NOT NULL",
-            "content_tsv @@ plainto_tsquery('english', :query)",
-        ]
         params: dict[str, object] = {
             "tenant_id": str(tenant_id),
             "query": query,
@@ -176,22 +186,35 @@ class ChunkRepository:
         }
 
         if document_id is not None:
-            where_clauses.append("document_id = :document_id")
             params["document_id"] = str(document_id)
-
-        where_sql = " AND ".join(where_clauses)
-
-        sql = text(f"""
-            SELECT id, tenant_id, resume_version_id, document_id,
-                   chunk_index, parent_chunk_id, section, content,
-                   page_from, page_to, start_char, end_char,
-                   token_count, embedding_model, embedding_version,
-                   ts_rank_cd(content_tsv, plainto_tsquery('english', :query)) AS score
-            FROM resume_chunks
-            WHERE {where_sql}
-            ORDER BY score DESC
-            LIMIT :top_k
-        """)
+            sql = text("""
+                SELECT id, tenant_id, resume_version_id, document_id,
+                       chunk_index, parent_chunk_id, section, content,
+                       page_from, page_to, start_char, end_char,
+                       token_count, embedding_model, embedding_version,
+                       ts_rank_cd(content_tsv, plainto_tsquery('english', :query)) AS score
+                FROM resume_chunks
+                WHERE tenant_id = :tenant_id
+                  AND content_tsv IS NOT NULL
+                  AND content_tsv @@ plainto_tsquery('english', :query)
+                  AND document_id = :document_id
+                ORDER BY score DESC
+                LIMIT :top_k
+            """)
+        else:
+            sql = text("""
+                SELECT id, tenant_id, resume_version_id, document_id,
+                       chunk_index, parent_chunk_id, section, content,
+                       page_from, page_to, start_char, end_char,
+                       token_count, embedding_model, embedding_version,
+                       ts_rank_cd(content_tsv, plainto_tsquery('english', :query)) AS score
+                FROM resume_chunks
+                WHERE tenant_id = :tenant_id
+                  AND content_tsv IS NOT NULL
+                  AND content_tsv @@ plainto_tsquery('english', :query)
+                ORDER BY score DESC
+                LIMIT :top_k
+            """)
 
         result = await self._session.execute(sql, params)
         rows = result.fetchall()
@@ -222,20 +245,31 @@ class ChunkRepository:
             chunks.append(ChunkWithScore(chunk=chunk, score=float(row.score)))
         return chunks
 
-    async def get_parents(self, chunk_ids: list[uuid.UUID]) -> list[ResumeChunk]:
-        """Retrieve parent chunks by their IDs.
+    async def get_parents(
+        self,
+        tenant_id: uuid.UUID,
+        chunk_ids: list[uuid.UUID],
+    ) -> list[ResumeChunk]:
+        """Retrieve parent chunks by their IDs, scoped to one tenant.
 
-        Used for parent expansion after child retrieval.
+        Used for parent expansion after child retrieval. ``tenant_id`` is required
+        rather than optional: the expanded text feeds LLM context, so isolation must
+        be enforced by the query itself and not left to caller discipline.
 
         Args:
+            tenant_id: Owning tenant. Chunks belonging to any other tenant are
+                excluded even if their IDs appear in ``chunk_ids``.
             chunk_ids: Parent chunk IDs to fetch.
 
         Returns:
-            The parent chunks.
+            The parent chunks owned by ``tenant_id``.
         """
         if not chunk_ids:
             return []
-        stmt = select(ResumeChunk).where(ResumeChunk.id.in_(chunk_ids))
+        stmt = select(ResumeChunk).where(
+            ResumeChunk.tenant_id == tenant_id,
+            ResumeChunk.id.in_(chunk_ids),
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

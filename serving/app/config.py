@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     embedding_dim: int = 1024
     embedding_batch_size: int = 32
 
+    # Ceiling on child chunks embedded per document. Embedding runs inline in the
+    # upload request while a pooled connection is held, so an unbounded document
+    # would occupy that connection for hundreds of sequential backend calls and
+    # starve `db_pool_size`. At the default child size this covers a CV far longer
+    # than any real one; excess children are dropped with a warning rather than
+    # rejecting the upload outright.
+    indexing_max_child_chunks: int = 600
+
     # --- Search (Phase 2) ----------------------------------------------------
     search_dense_weight: float = 0.6
     search_lexical_weight: float = 0.4
