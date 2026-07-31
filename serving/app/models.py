@@ -1,4 +1,4 @@
-"""ORM models for Phase 0-1.
+"""ORM models for Phase 0-2.
 
 Every tenant-scoped table carries `tenant_id` as the first filter column and is
 indexed on it. Content-addressed uniqueness on `(tenant_id, sha256)` is what
@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -123,6 +124,74 @@ class ResumeVersion(TimestampMixin, Base):
     quarantined: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     document: Mapped[ResumeDocument] = relationship(back_populates="versions")
+
+
+class ResumeChunk(TimestampMixin, Base):
+    """A chunk of resume text with its embedding vector.
+
+    Parent-child chunking: small children (~180 words) for embedding precision,
+    larger parents (~700 words) fed to the LLM for context. Retrieve on children,
+    expand to parents.
+
+    ``embedding_version`` on the row is what makes an embedding-model upgrade a
+    background backfill instead of a flag day.
+    """
+
+    __tablename__ = "resume_chunks"
+    __table_args__ = (
+        Index("ix_resume_chunks_tenant_document", "tenant_id", "document_id"),
+        Index("ix_resume_chunks_tenant_id", "tenant_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    resume_version_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("resume_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("resume_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    section: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="other"
+    )
+
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # content_tsv is managed by a database trigger; the column exists for GIN
+    # indexing and ts_rank_cd queries. We declare it here so SQLAlchemy knows
+    # about it but never write to it from Python.
+    content_tsv: Mapped[str | None] = mapped_column(
+        Text, nullable=True, server_default=None
+    )
+
+    page_from: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    page_to: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    start_char: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    end_char: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # pgvector embedding — stored as vector(1024). The HNSW index is created
+    # in the Alembic migration rather than here because SQLAlchemy's Index()
+    # does not support the pgvector-specific USING/WITH clauses.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(1024), nullable=True
+    )
+
+    embedding_model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    embedding_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+
+    is_parent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class Job(TimestampMixin, Base):
