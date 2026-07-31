@@ -11,7 +11,13 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-EXPECTED_TABLES = {"resume_documents", "resume_versions", "jobs"}
+EXPECTED_TABLES = {
+    "resume_documents",
+    "resume_versions",
+    "jobs",
+    "rubric_versions",
+    "requirements",
+}
 
 
 def test_alembic_config_is_discoverable():
