@@ -23,7 +23,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -167,11 +167,12 @@ class ResumeChunk(TimestampMixin, Base):
     )
 
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    # content_tsv is managed by a database trigger; the column exists for GIN
-    # indexing and ts_rank_cd queries. We declare it here so SQLAlchemy knows
-    # about it but never write to it from Python.
+    # content_tsv is a PostgreSQL tsvector GENERATED column managed by the
+    # database. The column exists for GIN indexing and ts_rank_cd queries.
+    # We declare it here so SQLAlchemy knows about it but never write to it
+    # from Python.
     content_tsv: Mapped[str | None] = mapped_column(
-        Text, nullable=True, server_default=None
+        TSVECTOR, nullable=True, server_default=None
     )
 
     page_from: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

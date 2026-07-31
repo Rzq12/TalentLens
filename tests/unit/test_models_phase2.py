@@ -92,3 +92,22 @@ def test_resume_chunk_parent_and_child_are_distinguishable() -> None:
     assert parent.parent_chunk_id is None
     assert child.is_parent is False
     assert child.parent_chunk_id == parent_id
+
+
+def test_resume_chunk_content_tsv_column_uses_tsvector_type() -> None:
+    """`content_tsv` must be TSVECTOR to match the migration's generated column.
+
+    The migration creates `content_tsv` as a PostgreSQL tsvector GENERATED column.
+    If the model declares it as Text, `Base.metadata.create_all()` will build
+    a TEXT column instead, and queries like `content_tsv @@ plainto_tsquery(...)`
+    will fail at runtime.
+    """
+    from sqlalchemy.dialects.postgresql import TSVECTOR
+
+    column = ResumeChunk.__table__.columns["content_tsv"]
+
+    assert isinstance(column.type, TSVECTOR), (
+        f"content_tsv type is {type(column.type).__name__}, not TSVECTOR — "
+        "this breaks lexical search with the @@ operator"
+    )
+    assert column.nullable is True
