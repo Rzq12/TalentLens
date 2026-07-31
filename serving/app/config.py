@@ -62,6 +62,22 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 10 * 1024 * 1024
     allowed_upload_mime_types: tuple[str, ...] = ("application/pdf", DOCX_MIME)
 
+    # --- Embedding (Phase 2) -------------------------------------------------
+    embedding_endpoint: str = "http://localhost:8080"
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_dim: int = 1024
+    embedding_batch_size: int = 32
+
+    # --- Search (Phase 2) ----------------------------------------------------
+    search_dense_weight: float = 0.6
+    search_lexical_weight: float = 0.4
+    search_top_k_recall: int = 20
+    search_rerank_top_k: int = 10
+
+    # --- Reranker (Phase 2) --------------------------------------------------
+    reranker_endpoint: str = ""
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+
     cors_allow_origins: tuple[str, ...] = ("http://localhost:5173",)
 
     log_level: str = "INFO"

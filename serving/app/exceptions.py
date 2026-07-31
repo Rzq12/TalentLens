@@ -128,3 +128,25 @@ class StorageError(TalentLensError):
     error_code: ClassVar[str] = "STORAGE_UNAVAILABLE"
     status_code: ClassVar[int] = 503
     default_message: ClassVar[str] = "Document storage is temporarily unavailable."
+
+
+# --------------------------------------------------------------------------- #
+# Search / Embeddings (Phase 2)                                                #
+# --------------------------------------------------------------------------- #
+
+
+class EmbeddingServiceUnavailableError(TalentLensError):
+    """Raised when the embedding service cannot be reached."""
+
+    error_code: ClassVar[str] = "EMBEDDING_SERVICE_UNAVAILABLE"
+    status_code: ClassVar[int] = 503
+    default_message: ClassVar[str] = "The embedding service is temporarily unavailable."
+
+
+class SearchError(TalentLensError):
+    """Raised when a search operation fails unexpectedly."""
+
+    error_code: ClassVar[str] = "SEARCH_FAILED"
+    status_code: ClassVar[int] = 500
+    default_message: ClassVar[str] = "The search operation failed."
+

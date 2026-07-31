@@ -21,7 +21,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import Settings, get_settings
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
-from app.routers import auth, jobs, resumes
+from app.routers import auth, jobs, resumes, search
 
 logger = get_logger(__name__)
 
@@ -47,7 +47,7 @@ _RATE_LIMIT_WINDOW_SECONDS = 60  # window duration
 _RATE_LIMIT_MAX_TRACKED_KEYS = 10_000  # hard ceiling on limiter memory
 
 # Paths that are rate-limited (upload endpoints are the highest risk).
-_RATE_LIMITED_PREFIXES = ("/api/v1/resumes", "/api/v1/jobs")
+_RATE_LIMITED_PREFIXES = ("/api/v1/resumes", "/api/v1/jobs", "/api/v1/search")
 
 _request_counts: dict[str, list[float]] = defaultdict(list)
 
@@ -341,4 +341,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router, prefix=cfg.api_v1_prefix)
     app.include_router(resumes.router, prefix=cfg.api_v1_prefix)
     app.include_router(jobs.router, prefix=cfg.api_v1_prefix)
+    app.include_router(search.router, prefix=cfg.api_v1_prefix)
     return app

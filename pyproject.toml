@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "talentlens"
 version = "0.1.0"
-description = "TalentLens — AI CV Screener (Phase 0-1: foundations + ingestion)"
+description = "TalentLens — AI CV Screener (Phase 0-2: foundations + ingestion + search)"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "fastapi>=0.141,<0.142",
@@ -23,6 +23,7 @@ dependencies = [
     "pdfplumber>=0.11,<0.12",
     "python-docx>=1.1,<2",
     "defusedxml>=0.7,<0.8",
+    "pgvector>=0.3,<0.4",
 ]
 
 [project.optional-dependencies]
