@@ -74,6 +74,10 @@ class RubricRepository(Protocol):
         """Return the highest version number minted for a job, or 0."""
         ...
 
+    async def job_exists(self, tenant_id: uuid.UUID, job_id: uuid.UUID) -> bool:
+        """Report whether the tenant owns a job with this identifier."""
+        ...
+
     async def replace_requirements(
         self,
         tenant_id: uuid.UUID,
@@ -116,8 +120,9 @@ def normalize_weights(weights: list[Decimal]) -> list[Decimal]:
         in the same order as the input.
 
     Raises:
-        ValidationFailedError: If the list is empty, any weight is negative, or
-            the total is zero.
+        ValidationFailedError: If the list is empty, any weight is negative, the
+            total is zero, or a positive weight is too small to survive
+            quantization — see the starvation check below.
     """
     if not weights:
         raise ValidationFailedError("A rubric must have at least one requirement.")
@@ -144,6 +149,19 @@ def normalize_weights(weights: list[Decimal]) -> list[Decimal]:
     )
     for i in order[:remainder]:
         floored[i] += 1
+
+    # A weight the caller gave as positive, that ends up with no units at all,
+    # is a request that cannot be honoured as asked: the criterion would sit in
+    # an approved rubric contributing nothing to any score, and nothing in the
+    # response would say so. A weight given as exactly 0 is left alone — that
+    # caller asked for an unscored criterion and got one.
+    starved = [i for i, units in enumerate(floored) if units == 0 and weights[i] > 0]
+    if starved:
+        raise ValidationFailedError(
+            f"{len(starved)} requirement(s) carry a weight too small to store "
+            f"relative to the rest of the set. The smallest representable share "
+            f"is {WEIGHT_QUANTUM}; raise the weight or drop the requirement."
+        )
 
     return [Decimal(units) * WEIGHT_QUANTUM for units in floored]
 
@@ -277,6 +295,33 @@ def _rescope(
     return requirements
 
 
+async def read_rubric(
+    *,
+    rubric_repo: RubricRepository,
+    principal: Principal,
+    rubric_version_id: uuid.UUID,
+) -> RubricVersion:
+    """Load one rubric version for reading.
+
+    Thin by design, but not redundant: it keeps the router out of the repository
+    and gives a cross-tenant read the same "not found" wording every other path
+    produces. A router that reached for the repository directly would answer with
+    a different message for the same condition.
+
+    Args:
+        rubric_repo: Rubric persistence.
+        principal: The authenticated caller.
+        rubric_version_id: Version to read.
+
+    Returns:
+        The rubric version.
+
+    Raises:
+        ResourceNotFoundError: If no such version exists for this tenant.
+    """
+    return await _load_version(rubric_repo, principal, rubric_version_id)
+
+
 async def create_draft_rubric(
     *,
     rubric_repo: RubricRepository,
@@ -299,11 +344,21 @@ async def create_draft_rubric(
         The persisted draft rubric version.
 
     Raises:
+        ResourceNotFoundError: If the job does not exist for this tenant. The
+            job is checked rather than assumed: `job_id` arrives in the request
+            body, and nothing else on this path constrains it. Without the
+            check a caller could author a rubric against another tenant's job
+            id, or against no job at all, and the `rubric_versions.job_id`
+            foreign key would accept it — the row is only required to reference
+            *a* job, not one the caller can see.
         ValidationFailedError: If the requirement set is empty or its weights
             are invalid.
     """
     if not requirements:
         raise ValidationFailedError("A rubric must have at least one requirement.")
+
+    if not await rubric_repo.job_exists(principal.tenant_id, job_id):
+        raise ResourceNotFoundError("Job not found.")
 
     next_version = await rubric_repo.max_version_for_job(principal.tenant_id, job_id) + 1
     version = RubricVersion(

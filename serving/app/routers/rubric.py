@@ -18,7 +18,6 @@ import uuid
 from fastapi import APIRouter, status
 
 from app.db import DbSession
-from app.exceptions import ResourceNotFoundError
 from app.models import Requirement, RubricVersion
 from app.repositories.rubric import RubricRepository
 from app.schemas.rubric import (
@@ -35,6 +34,7 @@ from app.services.rubric import (
     mint_next_version,
     update_draft_requirements,
 )
+from app.services.rubric import read_rubric as read_rubric_version
 
 router = APIRouter(prefix="/rubrics", tags=["rubrics"])
 
@@ -157,9 +157,11 @@ async def read_rubric(
         ResourceNotFoundError: If no such version exists for this tenant.
     """
     repository = RubricRepository(session)
-    version = await repository.get_version(principal.tenant_id, rubric_version_id)
-    if version is None:
-        raise ResourceNotFoundError()
+    version = await read_rubric_version(
+        rubric_repo=repository,
+        principal=principal,
+        rubric_version_id=rubric_version_id,
+    )
     requirements = await repository.list_requirements(principal.tenant_id, version.id)
     return _to_response(version, requirements)
 

@@ -47,7 +47,12 @@ _RATE_LIMIT_WINDOW_SECONDS = 60  # window duration
 _RATE_LIMIT_MAX_TRACKED_KEYS = 10_000  # hard ceiling on limiter memory
 
 # Paths that are rate-limited (upload endpoints are the highest risk).
-_RATE_LIMITED_PREFIXES = ("/api/v1/resumes", "/api/v1/jobs", "/api/v1/search")
+_RATE_LIMITED_PREFIXES = (
+    "/api/v1/resumes",
+    "/api/v1/jobs",
+    "/api/v1/search",
+    "/api/v1/rubrics",
+)
 
 _request_counts: dict[str, list[float]] = defaultdict(list)
 

@@ -180,6 +180,62 @@ def test_normalize_weights_preserves_a_single_requirement_as_full_weight() -> No
     assert normalize_weights([Decimal("5")]) == [Decimal("1.0000")]
 
 
+def test_normalize_weights_rejects_a_positive_weight_too_small_to_store() -> None:
+    """A criterion the author weighted cannot silently end up worth nothing.
+
+    `numeric(5,4)` holds 10,000 quanta. A weight whose share rounds below one
+    quantum floors to `0.0000`, and the rubric would then be approved carrying a
+    criterion that contributes to no score — with nothing in the response saying
+    so. Refusing is the only outcome that keeps the stored rubric a faithful
+    record of what the author asked for.
+    """
+    from app.services.rubric import normalize_weights
+
+    with pytest.raises(ValidationFailedError):
+        normalize_weights([Decimal("1000"), Decimal("0.00000001")])
+
+
+def test_normalize_weights_rejects_a_set_too_large_to_weight() -> None:
+    """Past 10,000 criteria the quanta run out however the weights are spread.
+
+    An equal-weight set of 20,000 previously stored 10,000 criteria at
+    `0.0000`. The failure is starvation, not drift: the surviving weights still
+    summed to exactly one, which is why nothing downstream could detect it.
+    """
+    from app.services.rubric import normalize_weights
+
+    with pytest.raises(ValidationFailedError):
+        normalize_weights([Decimal("1")] * 20_000)
+
+
+def test_normalize_weights_allows_a_weight_the_author_set_to_zero() -> None:
+    """An explicit zero is a request for an unscored criterion, not an error.
+
+    The starvation guard must distinguish "too small to store" from "asked for
+    nothing", or a rubric could not carry an informational criterion.
+    """
+    from app.services.rubric import normalize_weights
+
+    assert normalize_weights([Decimal("3"), Decimal("0")]) == [
+        Decimal("1.0000"),
+        Decimal("0.0000"),
+    ]
+
+
+def test_normalize_weights_still_sums_to_one_at_the_representable_limit() -> None:
+    """The guard must not reject a set that quantization can still represent.
+
+    10,000 equal criteria is exactly one quantum each — the boundary the
+    rejection test above sits just past.
+    """
+    from app.services.rubric import normalize_weights
+
+    normalized = normalize_weights([Decimal("1")] * 10_000)
+
+    assert sum(normalized) == Decimal("1.0000")
+    assert all(weight > 0 for weight in normalized)
+
+
 # --------------------------------------------------------------------------
 # compute_content_hash
 # --------------------------------------------------------------------------
@@ -316,12 +372,38 @@ class _FakeRubricRepository:
     Attributes:
         versions: Stored rubric versions keyed by id.
         requirements: Stored requirement lists keyed by rubric version id.
+        jobs: `(tenant_id, job_id)` pairs the tenant is allowed to author
+            against. A test that authors a rubric must seed the job first, the
+            same as production: the service refuses to attach a rubric to a job
+            the caller cannot see.
     """
 
     def __init__(self) -> None:
         """Start with an empty store."""
         self.versions: dict[uuid.UUID, object] = {}
         self.requirements: dict[uuid.UUID, list[object]] = {}
+        self.jobs: set[tuple[uuid.UUID, uuid.UUID]] = set()
+
+    def seed_job(self, tenant_id: uuid.UUID, job_id: uuid.UUID) -> None:
+        """Register a job as visible to a tenant.
+
+        Args:
+            tenant_id: Owning tenant.
+            job_id: Job the tenant may author rubrics against.
+        """
+        self.jobs.add((tenant_id, job_id))
+
+    async def job_exists(self, tenant_id: uuid.UUID, job_id: uuid.UUID) -> bool:
+        """Report whether the tenant owns this job.
+
+        Args:
+            tenant_id: Owning tenant.
+            job_id: Job to look for.
+
+        Returns:
+            True if the pair was seeded.
+        """
+        return (tenant_id, job_id) in self.jobs
 
     async def add_version(self, version: object) -> object:
         """Persist a rubric version.
@@ -401,16 +483,36 @@ class _FakeRubricRepository:
         return list(self.requirements.get(rubric_version_id, []))
 
 
+def _repo_with_job(job_id: uuid.UUID, *, tenant_id: uuid.UUID = _TENANT) -> tuple[
+    _FakeRubricRepository, uuid.UUID
+]:
+    """Return a store in which the tenant already owns `job_id`.
+
+    Authoring a rubric requires a visible job, so a test that does not seed one
+    is testing the 404 path whether it means to or not.
+
+    Args:
+        job_id: Job the rubric will be authored against.
+        tenant_id: Tenant that owns it.
+
+    Returns:
+        The store and the job id, for convenient unpacking.
+    """
+    repo = _FakeRubricRepository()
+    repo.seed_job(tenant_id, job_id)
+    return repo, job_id
+
+
 async def test_create_draft_rubric_mints_version_one_as_a_draft() -> None:
     """A brand-new rubric starts at version 1 and unapproved."""
     from app.services.rubric import create_draft_rubric
 
-    repo = _FakeRubricRepository()
+    repo, job_id = _repo_with_job(uuid.uuid4())
 
     version = await create_draft_rubric(
         rubric_repo=repo,
         principal=_principal(),
-        job_id=uuid.uuid4(),
+        job_id=job_id,
         requirements=[_requirement("Python", "1")],
     )
 
@@ -427,12 +529,12 @@ async def test_create_draft_rubric_normalizes_weights_on_save() -> None:
     """
     from app.services.rubric import create_draft_rubric
 
-    repo = _FakeRubricRepository()
+    repo, job_id = _repo_with_job(uuid.uuid4())
 
     version = await create_draft_rubric(
         rubric_repo=repo,
         principal=_principal(),
-        job_id=uuid.uuid4(),
+        job_id=job_id,
         requirements=[_requirement("Python", "3"), _requirement("Go", "1")],
     )
 
@@ -445,12 +547,12 @@ async def test_create_draft_rubric_scopes_requirements_to_the_new_version() -> N
     """Requirements inherit the tenant and version, or isolation breaks."""
     from app.services.rubric import create_draft_rubric
 
-    repo = _FakeRubricRepository()
+    repo, job_id = _repo_with_job(uuid.uuid4())
 
     version = await create_draft_rubric(
         rubric_repo=repo,
         principal=_principal(),
-        job_id=uuid.uuid4(),
+        job_id=job_id,
         requirements=[_requirement("Python", "1"), _requirement("Go", "1")],
     )
 
@@ -479,11 +581,11 @@ async def test_update_draft_requirements_renormalizes_the_new_set() -> None:
     """Editing a draft re-normalizes, so weights still sum to one afterwards."""
     from app.services.rubric import create_draft_rubric, update_draft_requirements
 
-    repo = _FakeRubricRepository()
+    repo, job_id = _repo_with_job(uuid.uuid4())
     version = await create_draft_rubric(
         rubric_repo=repo,
         principal=_principal(),
-        job_id=uuid.uuid4(),
+        job_id=job_id,
         requirements=[_requirement("Python", "1")],
     )
 
@@ -528,11 +630,11 @@ async def test_approve_rubric_stamps_the_approver_and_content_hash() -> None:
     """
     from app.services.rubric import approve_rubric, create_draft_rubric
 
-    repo = _FakeRubricRepository()
+    repo, job_id = _repo_with_job(uuid.uuid4())
     draft = await create_draft_rubric(
         rubric_repo=repo,
         principal=_principal(),
-        job_id=uuid.uuid4(),
+        job_id=job_id,
         requirements=[_requirement("Python", "1")],
     )
 
@@ -597,8 +699,7 @@ async def test_mint_next_version_supersedes_the_approved_version() -> None:
     """Editing an approved rubric forks version N+1 and retires the old one."""
     from app.services.rubric import approve_rubric, create_draft_rubric, mint_next_version
 
-    repo = _FakeRubricRepository()
-    job_id = uuid.uuid4()
+    repo, job_id = _repo_with_job(uuid.uuid4())
     draft = await create_draft_rubric(
         rubric_repo=repo,
         principal=_principal(),
@@ -623,11 +724,11 @@ async def test_mint_next_version_copies_the_requirements_forward() -> None:
     """The successor starts from the approved criteria, not from nothing."""
     from app.services.rubric import approve_rubric, create_draft_rubric, mint_next_version
 
-    repo = _FakeRubricRepository()
+    repo, job_id = _repo_with_job(uuid.uuid4())
     draft = await create_draft_rubric(
         rubric_repo=repo,
         principal=_principal(),
-        job_id=uuid.uuid4(),
+        job_id=job_id,
         requirements=[_requirement("Python", "3"), _requirement("Go", "1")],
     )
     approved = await approve_rubric(
@@ -656,3 +757,219 @@ async def test_mint_next_version_rejects_a_draft() -> None:
         await mint_next_version(
             rubric_repo=repo, principal=_principal(), rubric_version_id=draft.id
         )
+
+
+# --------------------------------------------------------------------------
+# authoring is bound to a job the caller can see
+# --------------------------------------------------------------------------
+
+
+async def test_create_draft_rubric_rejects_a_job_that_does_not_exist() -> None:
+    """`job_id` arrives in the request body and nothing else constrains it.
+
+    The `rubric_versions.job_id` foreign key only requires the row to reference
+    *a* job, so an unchecked id produced a rubric attached to nothing findable.
+    """
+    from app.services.rubric import create_draft_rubric
+
+    repo = _FakeRubricRepository()
+
+    with pytest.raises(ResourceNotFoundError):
+        await create_draft_rubric(
+            rubric_repo=repo,
+            principal=_principal(),
+            job_id=uuid.uuid4(),
+            requirements=[_requirement("Python", "1")],
+        )
+
+
+async def test_create_draft_rubric_rejects_another_tenants_job() -> None:
+    """Cross-tenant grafting is the sharper form of the same hole.
+
+    A caller who learns a competitor's job id could previously author criteria
+    against it and receive a 201. The job must be invisible, not merely absent,
+    so the check is scoped by tenant and the answer is the same "not found" a
+    nonexistent id produces — a distinct error would confirm the id exists.
+    """
+    from app.services.rubric import create_draft_rubric
+
+    job_id = uuid.uuid4()
+    repo = _FakeRubricRepository()
+    repo.seed_job(_OTHER_TENANT, job_id)
+
+    with pytest.raises(ResourceNotFoundError):
+        await create_draft_rubric(
+            rubric_repo=repo,
+            principal=_principal(),
+            job_id=job_id,
+            requirements=[_requirement("Python", "1")],
+        )
+
+    assert repo.versions == {}, "a rubric was stored against a foreign tenant's job"
+
+
+async def test_create_draft_rubric_checks_the_job_before_minting_a_version() -> None:
+    """A rejected create must not consume a version number.
+
+    `max_version_for_job` feeds the `version` column; running it for an
+    unauthorized job would leak whether that job has rubrics.
+    """
+    from app.services.rubric import create_draft_rubric
+
+    repo = _FakeRubricRepository()
+
+    with pytest.raises(ResourceNotFoundError):
+        await create_draft_rubric(
+            rubric_repo=repo,
+            principal=_principal(),
+            job_id=uuid.uuid4(),
+            requirements=[_requirement("Python", "1")],
+        )
+
+    assert repo.requirements == {}, "requirements were written for a rejected job"
+
+
+# --------------------------------------------------------------------------
+# read_rubric
+# --------------------------------------------------------------------------
+
+
+async def test_read_rubric_returns_the_version_for_its_owner() -> None:
+    """The read path exists so the router never reaches the repository itself."""
+    from app.services.rubric import read_rubric
+
+    repo = _FakeRubricRepository()
+    draft = _draft(tenant_id=_TENANT)
+    await repo.add_version(draft)
+
+    found = await read_rubric(
+        rubric_repo=repo, principal=_principal(), rubric_version_id=draft.id
+    )
+
+    assert found.id == draft.id
+
+
+async def test_read_rubric_reports_a_foreign_tenants_rubric_as_missing() -> None:
+    """A cross-tenant read is 404, not 403 — 403 would confirm the id exists."""
+    from app.services.rubric import read_rubric
+
+    repo = _FakeRubricRepository()
+    foreign = _draft(tenant_id=_OTHER_TENANT)
+    await repo.add_version(foreign)
+
+    with pytest.raises(ResourceNotFoundError):
+        await read_rubric(
+            rubric_repo=repo, principal=_principal(), rubric_version_id=foreign.id
+        )
+
+
+async def test_read_rubric_reports_an_unknown_id_as_missing() -> None:
+    """An id that was never minted is the same answer as one owned elsewhere."""
+    from app.services.rubric import read_rubric
+
+    repo = _FakeRubricRepository()
+
+    with pytest.raises(ResourceNotFoundError):
+        await read_rubric(
+            rubric_repo=repo, principal=_principal(), rubric_version_id=uuid.uuid4()
+        )
+
+
+async def test_read_rubric_words_a_missing_rubric_the_same_way_every_path_does() -> None:
+    """The router used to raise its own bare error, so one path read differently.
+
+    Wording is the contract a client branches on when it renders the failure.
+    Comparing against `approve_rubric` pins the two to the same string rather
+    than to a literal this test could quietly drift from.
+    """
+    from app.services.rubric import approve_rubric, read_rubric
+
+    repo = _FakeRubricRepository()
+    missing = uuid.uuid4()
+
+    with pytest.raises(ResourceNotFoundError) as read_error:
+        await read_rubric(
+            rubric_repo=repo, principal=_principal(), rubric_version_id=missing
+        )
+    with pytest.raises(ResourceNotFoundError) as approve_error:
+        await approve_rubric(
+            rubric_repo=repo, principal=_principal(), rubric_version_id=missing
+        )
+
+    assert str(read_error.value) == str(approve_error.value)
+
+
+# --------------------------------------------------------------------------
+# an empty requirement set is refused on every path that can produce one
+# --------------------------------------------------------------------------
+
+
+async def test_update_draft_requirements_rejects_an_empty_set() -> None:
+    """Emptying a draft would leave a rubric that scores everyone identically.
+
+    The create path already refuses this. The edit path can reach the same state
+    by replacing the set with nothing, so it needs its own guard rather than
+    inheriting one.
+    """
+    from app.services.rubric import create_draft_rubric, update_draft_requirements
+
+    repo, job_id = _repo_with_job(uuid.uuid4())
+    version = await create_draft_rubric(
+        rubric_repo=repo,
+        principal=_principal(),
+        job_id=job_id,
+        requirements=[_requirement("Python", "1")],
+    )
+
+    with pytest.raises(ValidationFailedError):
+        await update_draft_requirements(
+            rubric_repo=repo,
+            principal=_principal(),
+            rubric_version_id=version.id,
+            requirements=[],
+        )
+
+    assert len(await repo.list_requirements(_TENANT, version.id)) == 1
+
+
+async def test_approve_rubric_rejects_a_draft_with_no_requirements() -> None:
+    """Approval is the sign-off that unblocks scoring, so it needs criteria.
+
+    A draft can reach this state through a route that bypassed the service, or
+    through a partially applied edit; approving it would stamp a content hash
+    over an empty set and let scoring run against nothing.
+    """
+    from app.services.rubric import approve_rubric
+
+    repo = _FakeRubricRepository()
+    draft = _draft(tenant_id=_TENANT)
+    await repo.add_version(draft)
+
+    with pytest.raises(ValidationFailedError):
+        await approve_rubric(
+            rubric_repo=repo, principal=_principal(), rubric_version_id=draft.id
+        )
+
+    assert draft.status == "draft", "a rubric with no criteria was approved"
+    assert draft.content_hash is None
+
+
+async def test_mint_next_version_rejects_a_predecessor_with_no_requirements() -> None:
+    """The successor is a copy, and copying nothing yields an unusable draft.
+
+    Failing here is louder than minting an empty version the author then has to
+    notice is empty.
+    """
+    from app.services.rubric import mint_next_version
+
+    repo = _FakeRubricRepository()
+    approved = _draft(tenant_id=_TENANT, status="approved")
+    await repo.add_version(approved)
+
+    with pytest.raises(ValidationFailedError):
+        await mint_next_version(
+            rubric_repo=repo, principal=_principal(), rubric_version_id=approved.id
+        )
+
+    assert len(repo.versions) == 1, "an empty successor version was minted"
+    assert approved.status == "approved", "the predecessor was superseded anyway"

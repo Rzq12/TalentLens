@@ -26,6 +26,12 @@ MAX_MIN_YEARS = 99
 # Weights are relative, not percentages, so the ceiling only has to stop absurd
 # input from reaching the normalizer. numeric(5,4) holds the normalized result.
 MAX_WEIGHT = 1000
+# A rubric a human is expected to read and sign off on does not run to hundreds
+# of criteria. The ceiling exists because the list drives one INSERT per element
+# plus a sort, so an unbounded list is a write-amplification lever on a shared
+# database. It also keeps the set well clear of the 10,000 weight quanta
+# available: past that, criteria cannot all carry a non-zero normalized weight.
+MAX_REQUIREMENTS = 200
 
 RequirementCategory = Literal[
     "skill",
@@ -36,6 +42,21 @@ RequirementCategory = Literal[
     "other",
 ]
 RubricSource = Literal["manual", "extracted", "template"]
+RubricStatus = Literal["draft", "approved", "superseded"]
+# A floor only means something if both sides read it the same way. Free text
+# would let "Sr." and "senior" express the same requirement while comparing
+# unequal, which makes the floor unenforceable by anything downstream.
+SeniorityLevel = Literal[
+    "intern",
+    "junior",
+    "mid",
+    "senior",
+    "staff",
+    "principal",
+    "lead",
+    "manager",
+    "director",
+]
 
 
 class RequirementInput(BaseModel):
@@ -66,9 +87,8 @@ class RequirementInput(BaseModel):
         le=MAX_MIN_YEARS,
         description="Minimum years of relevant experience, if this criterion has a floor.",
     )
-    min_seniority: str | None = Field(
+    min_seniority: SeniorityLevel | None = Field(
         default=None,
-        max_length=32,
         description="Minimum seniority level, if this criterion has a floor.",
     )
 
@@ -100,6 +120,7 @@ class RubricCreateRequest(BaseModel):
     job_id: uuid.UUID = Field(description="Job the rubric is authored against.")
     requirements: list[RequirementInput] = Field(
         min_length=1,
+        max_length=MAX_REQUIREMENTS,
         description="The criteria, in display order. A rubric with none cannot score.",
     )
     source: RubricSource = Field(
@@ -113,6 +134,7 @@ class RequirementReplaceRequest(BaseModel):
 
     requirements: list[RequirementInput] = Field(
         min_length=1,
+        max_length=MAX_REQUIREMENTS,
         description="The replacement criteria, in display order.",
     )
 
@@ -125,11 +147,16 @@ class RequirementResponse(BaseModel):
     id: uuid.UUID
     ordinal: int = Field(description="Display order within the rubric, from 0.")
     text: str
-    category: str
+    category: RequirementCategory
     is_must_have: bool
     weight: Decimal = Field(description="Normalized weight; the set sums to exactly 1.0000.")
     min_years: Decimal | None = None
-    min_seniority: str | None = None
+    # Narrowed to match `RequirementInput`. Publishing `str` here would tell a
+    # client the field is arbitrary text and leave it unable to branch on the
+    # value exhaustively, even though nothing can store anything else: the column
+    # is only ever written from a validated `RequirementInput`, and the copy made
+    # by minting a successor carries values that already passed that check.
+    min_seniority: SeniorityLevel | None = None
 
 
 class RubricResponse(BaseModel):
@@ -143,7 +170,7 @@ class RubricResponse(BaseModel):
     rubric_version_id: uuid.UUID
     job_id: uuid.UUID
     version: int = Field(description="Monotonic per job, starting at 1.")
-    status: str = Field(description='"draft", "approved", or "superseded".')
+    status: RubricStatus = Field(description='"draft", "approved", or "superseded".')
     content_hash: str | None = Field(
         default=None,
         description="Fingerprint of the frozen criteria. Null while the rubric is a draft.",
@@ -152,5 +179,5 @@ class RubricResponse(BaseModel):
         description="Ceiling applied to a candidate who fails any must-have.",
     )
     aggregation_formula_version: str
-    source: str
+    source: RubricSource
     requirements: list[RequirementResponse] = Field(default_factory=list)

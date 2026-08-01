@@ -21,7 +21,9 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
+import pytest
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import IntegrityError
 
 _TENANT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 _OTHER_TENANT = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -115,6 +117,54 @@ class _RecordingSession:
         """Record a flush."""
         self.flushes += 1
         self.calls.append("flush")
+
+
+class _FailingFlushSession(_RecordingSession):
+    """A session whose flush raises, standing in for a rejected INSERT.
+
+    A unique-constraint violation is only observable at flush time, and it comes
+    from PostgreSQL rather than from anything the repository can compute. This
+    double is the only way to reach that branch without a live database and a
+    genuine race.
+    """
+
+    def __init__(self, error: BaseException, *results: _Result) -> None:
+        """Queue the error `flush` should raise.
+
+        Args:
+            error: Raised on the first flush.
+            results: Results for `execute`, as in the base class.
+        """
+        super().__init__(*results)
+        self.raised = error
+
+    async def flush(self) -> None:
+        """Record the attempt, then fail the way the database would.
+
+        Raises:
+            BaseException: The error supplied at construction.
+        """
+        self.flushes += 1
+        self.calls.append("flush")
+        raise self.raised
+
+
+def _integrity_error(constraint: str) -> IntegrityError:
+    """Build the error asyncpg produces for a named constraint violation.
+
+    asyncpg exposes the constraint name on the driver error, and the repository
+    reads it from there before falling back to the rendered message. Setting the
+    attribute is what distinguishes this from the message-only case.
+
+    Args:
+        constraint: Name of the violated constraint.
+
+    Returns:
+        An `IntegrityError` whose `orig` carries `constraint_name`.
+    """
+    orig = Exception(f'duplicate key value violates unique constraint "{constraint}"')
+    orig.constraint_name = constraint  # type: ignore[attr-defined]
+    return IntegrityError("INSERT INTO rubric_versions", {}, orig)
 
 
 def _sql(statement: Any) -> str:
@@ -379,6 +429,109 @@ async def test_add_version_flushes_so_the_id_is_usable() -> None:
 
     assert session.flushes >= 1
     assert session.calls.index("add") < session.calls.index("flush")
+
+
+async def test_add_version_maps_a_duplicate_version_to_a_conflict() -> None:
+    """The version number comes from `max(version) + 1`, which is check-then-act.
+
+    Two authors reading the same maximum compute the same successor, and
+    `uq_rubric_versions_job_version` rejects the loser. That is the constraint
+    doing its job, but unhandled it surfaced as an `IntegrityError` and the
+    global handler turned a retryable conflict into a 500 — a status that tells
+    the caller not to retry.
+    """
+    from app.exceptions import ResourceConflictError
+
+    session = _FailingFlushSession(_integrity_error("uq_rubric_versions_job_version"))
+
+    with pytest.raises(ResourceConflictError) as caught:
+        await _repository(session).add_version(_version())
+
+    assert caught.value.status_code == 409
+
+
+async def test_add_version_reraises_an_unrelated_integrity_error() -> None:
+    """Only the version collision is retryable; nothing else may be relabelled.
+
+    A missing job violates the foreign key. Reporting that as "retry — someone
+    else minted this version" would send the caller into a loop that cannot
+    succeed, and would hide a real referential bug behind a 409.
+    """
+    session = _FailingFlushSession(_integrity_error("rubric_versions_job_id_fkey"))
+
+    with pytest.raises(IntegrityError):
+        await _repository(session).add_version(_version())
+
+
+async def test_add_version_recognizes_a_constraint_named_only_in_the_message() -> None:
+    """`constraint_name` is an asyncpg attribute; other drivers only render text.
+
+    SQLite — which the migration tests run against — raises without it. Reading
+    the attribute alone would silently stop mapping the conflict there, so the
+    string fallback is part of the contract, not a defensive extra.
+    """
+    from app.exceptions import ResourceConflictError
+
+    session = _FailingFlushSession(
+        IntegrityError(
+            "INSERT INTO rubric_versions",
+            {},
+            Exception("UNIQUE constraint failed: uq_rubric_versions_job_version"),
+        )
+    )
+
+    with pytest.raises(ResourceConflictError):
+        await _repository(session).add_version(_version())
+
+
+# ---------------------------------------------------------------------------
+# job_exists
+# ---------------------------------------------------------------------------
+
+
+async def test_job_exists_filters_on_tenant_and_job() -> None:
+    """Authoring is bound to a job the caller owns, so both columns must bind.
+
+    A query scoped by id alone would let a caller attach a rubric to another
+    tenant's job by learning or guessing a single identifier.
+    """
+    session = _RecordingSession(_Result(scalar=1))
+
+    await _repository(session).job_exists(_TENANT, _JOB)
+
+    sql = _sql(session.statements[0]).lower()
+    assert "jobs.tenant_id" in sql
+    assert "jobs.id" in sql
+    assert _TENANT in _params(session.statements[0]).values()
+
+
+async def test_job_exists_is_true_when_the_tenant_owns_the_job() -> None:
+    """The permitted case has to pass, or the new check bars every author."""
+    session = _RecordingSession(_Result(scalar=1))
+
+    assert await _repository(session).job_exists(_TENANT, _JOB) is True
+
+
+async def test_job_exists_is_false_when_no_row_matches() -> None:
+    """A foreign job and a nonexistent one give the same answer: not visible."""
+    session = _RecordingSession(_Result(scalar=None))
+
+    assert await _repository(session).job_exists(_OTHER_TENANT, _JOB) is False
+
+
+async def test_job_exists_does_not_load_the_job_body() -> None:
+    """A job carries a full description this check never reads.
+
+    Selecting the row would pull `description_raw` across the wire on every
+    rubric create, to answer a question a single literal answers.
+    """
+    session = _RecordingSession(_Result(scalar=1))
+
+    await _repository(session).job_exists(_TENANT, _JOB)
+
+    sql = _sql(session.statements[0]).lower()
+    assert "description_raw" not in sql
+    assert "limit" in sql
 
 
 # ---------------------------------------------------------------------------

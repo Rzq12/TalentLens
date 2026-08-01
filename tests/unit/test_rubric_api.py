@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import get_args
 
 import httpx
 import pytest
@@ -392,6 +393,120 @@ async def test_an_unknown_category_is_rejected(make_token) -> None:
     assert response.status_code == 422
 
 
+async def test_a_requirement_list_beyond_the_ceiling_is_rejected(make_token) -> None:
+    """An unbounded list is one INSERT per element on a shared database.
+
+    A single 50,000-criterion request was previously accepted with a 201. The
+    bound is read from `MAX_REQUIREMENTS` rather than written as a literal, so
+    raising the constant cannot leave this test silently checking the old one.
+    """
+    from app.schemas.rubric import MAX_REQUIREMENTS
+
+    session = _StubSession(scalar=0)
+    oversized = [
+        _requirement_payload(text=f"Criterion {i}.") for i in range(MAX_REQUIREMENTS + 1)
+    ]
+
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            RUBRICS,
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json=_create_payload(requirements=oversized),
+        )
+
+    assert response.status_code == 422
+    assert session.added == [], "an oversized payload reached the session"
+
+
+async def test_a_requirement_list_at_the_ceiling_is_accepted(make_token) -> None:
+    """The bound must be a ceiling, not an off-by-one that rejects the limit.
+
+    It also has to sit inside what `numeric(5,4)` can weight: 200 equal criteria
+    are 50 quanta each, well clear of the starvation floor.
+    """
+    from app.schemas.rubric import MAX_REQUIREMENTS
+
+    session = _StubSession(scalar=0)
+    at_limit = [_requirement_payload(text=f"Criterion {i}.") for i in range(MAX_REQUIREMENTS)]
+
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            RUBRICS,
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json=_create_payload(requirements=at_limit),
+        )
+
+    assert response.status_code == 201, response.text
+    weights = [Decimal(str(item["weight"])) for item in response.json()["requirements"]]
+    assert sum(weights) == Decimal("1.0000")
+
+
+@pytest.mark.parametrize(
+    "value", ["<script>alert(1)</script>", "Sr.", "very senior", "SENIOR", ""]
+)
+async def test_a_free_text_seniority_floor_is_rejected(make_token, value) -> None:
+    """A floor only means something if both sides read it the same way.
+
+    `min_seniority` was free text bounded only by length, so "Sr." and "senior"
+    expressed the same requirement while comparing unequal — which makes the
+    floor unenforceable by anything downstream, and let markup through as a
+    stored value.
+    """
+    session = _StubSession(scalar=0)
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            RUBRICS,
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json=_create_payload(requirements=[_requirement_payload(min_seniority=value)]),
+        )
+
+    assert response.status_code == 422, response.text
+    assert session.added == []
+
+
+async def test_a_recognized_seniority_floor_is_accepted(make_token) -> None:
+    """Tightening the type must not reject the values the product actually uses."""
+    session = _StubSession(scalar=0)
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            RUBRICS,
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json=_create_payload(requirements=[_requirement_payload(min_seniority="senior")]),
+        )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["requirements"][0]["min_seniority"] == "senior"
+
+
+def test_the_seniority_floor_reads_the_same_on_the_way_in_and_out() -> None:
+    """A response looser than the request cannot be branched on exhaustively.
+
+    The field is only ever written from a validated `RequirementInput`, so a
+    `str` on the response would advertise a freedom the API does not have and
+    force every client into a default branch that cannot be reached.
+    """
+    from app.schemas.rubric import RequirementInput, RequirementResponse
+
+    incoming = RequirementInput.model_fields["min_seniority"].annotation
+    outgoing = RequirementResponse.model_fields["min_seniority"].annotation
+
+    assert incoming == outgoing
+
+
+def test_the_documented_rubric_status_matches_what_the_service_can_set() -> None:
+    """The published enum must list every state a rubric can actually be in.
+
+    A status the service assigns but the schema omits fails serialization on the
+    response — the mutation succeeds and the caller sees a 500.
+    """
+    from app.schemas.rubric import RubricResponse
+    from app.services.rubric import APPROVED_STATUS, EDITABLE_STATUS, SUPERSEDED_STATUS
+
+    published = set(get_args(RubricResponse.model_fields["status"].annotation))
+
+    assert {EDITABLE_STATUS, APPROVED_STATUS, SUPERSEDED_STATUS} <= published
+
+
 async def test_a_caller_cannot_choose_the_tenant_a_rubric_belongs_to(make_token) -> None:
     """Tenant comes from the verified token only — never from the payload."""
     session = _StubSession(scalar=0)
@@ -515,6 +630,26 @@ async def test_reading_an_unknown_rubric_is_a_404(make_token) -> None:
         )
 
     assert response.status_code == 404
+
+
+async def test_a_missing_rubric_answers_with_the_standard_error_envelope(make_token) -> None:
+    """The read route used to raise its own bare error, bypassing the service.
+
+    Every failure on this surface carries the same envelope, and the read path
+    has to be in it: a client branches on `error`, and a correlation id is what
+    ties a support report to a log line.
+    """
+    session = _StubSession(one=None)
+    async with _app_client(session) as ac:
+        response = await ac.get(
+            f"{RUBRICS}/{uuid.uuid4()}", headers={"Authorization": f"Bearer {make_token()}"}
+        )
+
+    body = response.json()
+    assert body["error"] == "NOT_FOUND"
+    assert body["status_code"] == 404
+    assert uuid.UUID(body["request_id"])
+    assert response.headers["X-Request-ID"] == body["request_id"]
 
 
 @pytest.mark.parametrize("role", _READ_ONLY_ROLES)
@@ -711,3 +846,95 @@ async def test_listing_jobs_requires_authentication(client) -> None:
     response = await client.get(JOBS)
 
     assert response.status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# Authoring is bound to a visible job                                          #
+# --------------------------------------------------------------------------- #
+
+
+async def test_authoring_against_an_invisible_job_is_a_404(make_token) -> None:
+    """`job_id` comes from the request body and nothing else constrains it.
+
+    With `scalar=None` the existence probe finds no row — the same state a
+    nonexistent id and another tenant's id both produce. This previously
+    returned 201 and stored a rubric hanging off an id the caller could not see.
+    """
+    session = _StubSession(scalar=None)
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            RUBRICS,
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json=_create_payload(job_id=str(uuid.uuid4())),
+        )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["error"] == "NOT_FOUND"
+
+
+async def test_a_rejected_job_stores_nothing(make_token) -> None:
+    """The refusal has to happen before any row is staged.
+
+    A version staged and then abandoned still consumes a version number and
+    leaves the session dirty for whatever commits next.
+    """
+    from app.models import Requirement, RubricVersion
+
+    session = _StubSession(scalar=None)
+    async with _app_client(session) as ac:
+        await ac.post(
+            RUBRICS,
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json=_create_payload(job_id=str(uuid.uuid4())),
+        )
+
+    assert not [row for row in session.added if isinstance(row, RubricVersion)]
+    assert not [row for row in session.added if isinstance(row, Requirement)]
+
+
+# --------------------------------------------------------------------------- #
+# Rate limiting                                                                #
+# --------------------------------------------------------------------------- #
+
+
+async def test_rubric_authoring_is_rate_limited(make_token) -> None:
+    """Rubric creation writes one row per criterion and was left unthrottled.
+
+    Every other write surface is covered, so an unlisted prefix is the cheapest
+    bulk-write path into the database. The loop runs past the configured budget
+    rather than a hard-coded count so the assertion tracks the setting.
+    """
+    from app.main import _RATE_LIMIT_REQUESTS
+
+    session = _StubSession(scalar=0)
+    headers = {"Authorization": f"Bearer {make_token()}"}
+    statuses: list[int] = []
+
+    async with _app_client(session) as ac:
+        for _ in range(_RATE_LIMIT_REQUESTS + 5):
+            response = await ac.post(RUBRICS, headers=headers, json=_create_payload())
+            statuses.append(response.status_code)
+
+    assert 429 in statuses, f"no request was throttled: {sorted(set(statuses))}"
+    assert statuses[0] == 201, "throttling began before the budget was spent"
+
+
+async def test_the_rate_limit_refusal_uses_the_standard_error_envelope(make_token) -> None:
+    """A throttled caller needs a machine-readable reason, not a bare 429."""
+    from app.main import _RATE_LIMIT_REQUESTS
+
+    session = _StubSession(scalar=0)
+    headers = {"Authorization": f"Bearer {make_token()}"}
+
+    async with _app_client(session) as ac:
+        throttled = None
+        for _ in range(_RATE_LIMIT_REQUESTS + 5):
+            response = await ac.post(RUBRICS, headers=headers, json=_create_payload())
+            if response.status_code == 429:
+                throttled = response
+                break
+
+    assert throttled is not None, "the limiter never engaged"
+    body = throttled.json()
+    assert body["status_code"] == 429
+    assert uuid.UUID(body["request_id"])

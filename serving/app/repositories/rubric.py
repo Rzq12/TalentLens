@@ -15,10 +15,31 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, literal, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Requirement, RubricVersion
+from app.exceptions import ResourceConflictError
+from app.models import Job, Requirement, RubricVersion
+
+
+def _violates(error: IntegrityError, constraint: str) -> bool:
+    """Report whether an integrity error came from a named constraint.
+
+    asyncpg exposes the constraint name on the wrapped driver error, but the
+    attribute is absent on other drivers and on errors raised before the
+    statement reached the server. The string fallback keeps this honest on
+    SQLite and on any driver that only renders the name into the message.
+
+    Args:
+        error: The integrity error raised by the flush.
+        constraint: Constraint name to test for.
+
+    Returns:
+        True if the error is attributable to that constraint.
+    """
+    name = getattr(error.orig, "constraint_name", None)
+    return name == constraint or constraint in str(error.orig)
 
 
 class RubricRepository:
@@ -44,9 +65,26 @@ class RubricRepository:
 
         Returns:
             The same instance, now flushed.
+
+        Raises:
+            ResourceConflictError: If another transaction already minted this
+                version number for the job. The version comes from a
+                `max(version) + 1` read, so two concurrent authors compute the
+                same successor and `uq_rubric_versions_job_version` rejects the
+                loser. That is the constraint doing its job, but it surfaces as
+                a driver error, and an unhandled one becomes a 500 for what is
+                really a retryable conflict.
         """
         self._session.add(version)
-        await self._session.flush()
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            if _violates(exc, "uq_rubric_versions_job_version"):
+                raise ResourceConflictError(
+                    f"Version {version.version} of this rubric already exists. "
+                    "Another author minted it concurrently; retry the request."
+                ) from exc
+            raise
         return version
 
     async def get_version(
@@ -87,6 +125,28 @@ class RubricRepository:
             RubricVersion.job_id == job_id,
         )
         return (await self._session.execute(stmt)).scalar() or 0
+
+    async def job_exists(self, tenant_id: uuid.UUID, job_id: uuid.UUID) -> bool:
+        """Report whether this tenant owns a job with this identifier.
+
+        Selects the literal 1 rather than the row: the caller only needs to know
+        whether authoring against this job is permitted, and a job description
+        carries a full text body nothing here reads.
+
+        Args:
+            tenant_id: Owning tenant.
+            job_id: Job to look for.
+
+        Returns:
+            True if the job exists and belongs to this tenant.
+        """
+        stmt = (
+            select(literal(1))
+            .select_from(Job)
+            .where(Job.tenant_id == tenant_id, Job.id == job_id)
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar() is not None
 
     async def replace_requirements(
         self,
