@@ -150,3 +150,34 @@ class SearchError(TalentLensError):
     status_code: ClassVar[int] = 500
     default_message: ClassVar[str] = "The search operation failed."
 
+
+# --------------------------------------------------------------------------- #
+# Scoring (Phase 4)                                                            #
+# --------------------------------------------------------------------------- #
+
+
+class CoreStageFailedError(TalentLensError):
+    """Raised when a stage that scoring depends on could not complete.
+
+    Scoring has no safe fallback. A stage that fails must abort the run rather
+    than substitute a default verdict, which would bias the score silently and
+    leave a number nobody can account for.
+    """
+
+    error_code: ClassVar[str] = "CORE_STAGE_FAILED"
+    status_code: ClassVar[int] = 500
+    default_message: ClassVar[str] = "A required scoring stage failed."
+
+
+class EvidenceSpanMismatchError(CoreStageFailedError):
+    """Raised when a cited span is not present verbatim at its claimed offset.
+
+    Evidence is the audit trail behind a verdict. A quote that does not sit at
+    the offset it claims cannot be reviewed, so the verdict citing it is not
+    admissible.
+    """
+
+    error_code: ClassVar[str] = "EVIDENCE_SPAN_MISMATCH"
+    status_code: ClassVar[int] = 500
+    default_message: ClassVar[str] = "Cited evidence does not match the source document."
+
