@@ -267,14 +267,21 @@ def test_every_rubric_route_declares_a_response_model() -> None:
 
     A route that leaks an ORM object serializes whatever columns happen to
     exist, which is how internal fields reach an API response by accident.
+
+    The rubric path set is asserted non-empty first: this check is a filter
+    over the schema, so an unregistered router would leave nothing to inspect
+    and the test would pass without having verified a single route.
     """
     from app.main import create_app
 
     schema = create_app().openapi()
+    rubric_paths = {
+        path: methods for path, methods in schema["paths"].items() if path.startswith(RUBRICS)
+    }
+    assert rubric_paths, "the OpenAPI document contains no rubric paths"
+
     modelless: list[str] = []
-    for path, methods in schema["paths"].items():
-        if not path.startswith(RUBRICS):
-            continue
+    for path, methods in rubric_paths.items():
         for method, operation in methods.items():
             success = [code for code in operation.get("responses", {}) if code.startswith("2")]
             content = operation["responses"][success[0]].get("content", {}) if success else {}
