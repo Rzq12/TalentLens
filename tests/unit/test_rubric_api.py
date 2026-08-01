@@ -217,12 +217,19 @@ def _job(title: str = "Backend Engineer", *, created: datetime | None = None) ->
 
 
 def test_the_rubric_router_is_registered_under_the_versioned_prefix() -> None:
-    """An unregistered router is invisible: every route would 404 in production."""
+    """An unregistered router is invisible: every route would 404 in production.
+
+    Paths are read from the generated schema rather than by scanning
+    `app.routes`. FastAPI 0.141 wraps each `include_router` call in an internal
+    `_IncludedRouter` that carries no `path` attribute of its own, so filtering
+    the top-level route list on `hasattr(route, "path")` discards every mounted
+    router and reports a correctly wired app as unregistered.
+    """
     from app.config import get_settings
     from app.main import create_app
 
     prefix = f"{get_settings().api_v1_prefix}/rubrics"
-    paths = {route.path for route in create_app().routes if hasattr(route, "path")}
+    paths = set(create_app().openapi()["paths"])
 
     assert any(path.startswith(prefix) for path in paths), (
         f"no route under {prefix} — the rubric router was not included in create_app"

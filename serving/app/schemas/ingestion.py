@@ -133,3 +133,36 @@ class JobResponse(BaseModel):
     source: str
     status: str
     created_at: datetime
+
+
+class JobSummary(BaseModel):
+    """One row in a job listing.
+
+    `description_raw` is deliberately absent. A listing of fifty jobs would
+    otherwise carry fifty full descriptions — the payload a caller has to
+    download to render a picker would be dominated by text nothing in the
+    list displays.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    department: str | None = None
+    location: str | None = None
+    employment_type: str | None = None
+    seniority: str | None = None
+    source: str
+    status: str
+    created_at: datetime
+
+
+class JobListResponse(BaseModel):
+    """A page of job summaries."""
+
+    items: list[JobSummary] = Field(default_factory=list)
+    count: int = 0
+    next_cursor: str | None = Field(
+        default=None,
+        description="Pass as `before` for the next page. Null when exhausted.",
+    )

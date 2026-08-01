@@ -21,7 +21,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import Settings, get_settings
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
-from app.routers import auth, jobs, resumes, search
+from app.routers import auth, jobs, resumes, rubric, search
 
 logger = get_logger(__name__)
 
@@ -341,5 +341,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router, prefix=cfg.api_v1_prefix)
     app.include_router(resumes.router, prefix=cfg.api_v1_prefix)
     app.include_router(jobs.router, prefix=cfg.api_v1_prefix)
+    app.include_router(rubric.router, prefix=cfg.api_v1_prefix)
     app.include_router(search.router, prefix=cfg.api_v1_prefix)
     return app

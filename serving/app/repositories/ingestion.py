@@ -172,12 +172,20 @@ class JobRepository:
         stmt = select(Job).where(Job.tenant_id == tenant_id, Job.id == job_id)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
-    async def list_for_tenant(self, tenant_id: uuid.UUID, limit: int = 50) -> Sequence[Job]:
+    async def list_for_tenant(
+        self,
+        tenant_id: uuid.UUID,
+        limit: int = 50,
+        *,
+        before: datetime | None = None,
+    ) -> Sequence[Job]:
         """Return the tenant's most recent jobs.
 
         Args:
             tenant_id: Owning tenant.
             limit: Maximum rows to return.
+            before: If provided, only return jobs created before this time
+                (cursor-based pagination).
 
         Returns:
             Jobs ordered newest first.
@@ -188,4 +196,6 @@ class JobRepository:
             .order_by(Job.created_at.desc())
             .limit(limit)
         )
+        if before is not None:
+            stmt = stmt.where(Job.created_at < before)
         return (await self._session.execute(stmt)).scalars().all()

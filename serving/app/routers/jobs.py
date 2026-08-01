@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, UploadFile, status
+from fastapi import APIRouter, File, Form, Query, UploadFile, status
 
 from app.db import DbSession
 from app.exceptions import ResourceNotFoundError, ValidationFailedError
 from app.repositories.ingestion import JobRepository
-from app.schemas.ingestion import JobCreateRequest, JobResponse
+from app.schemas.ingestion import (
+    JobCreateRequest,
+    JobListResponse,
+    JobResponse,
+    JobSummary,
+)
 from app.security import ReadPrincipal, WritePrincipal
 from app.services.ingestion import create_job_from_text, create_job_from_upload
 from app.utils.upload import read_upload_bounded
@@ -93,6 +99,50 @@ async def upload_job(
         title=title.strip(),
     )
     return JobResponse.model_validate(job)
+
+
+@router.get(
+    "",
+    response_model=JobListResponse,
+    summary="List job descriptions",
+    description=(
+        "Returns the tenant's jobs, newest first. Rows omit the full "
+        "description — read a single job for that. Page by passing the "
+        "returned `next_cursor` back as `before`."
+    ),
+)
+async def list_jobs(
+    principal: ReadPrincipal,
+    session: DbSession,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    before: Annotated[
+        datetime | None,
+        Query(description="Cursor: return jobs created before this ISO 8601 timestamp."),
+    ] = None,
+) -> JobListResponse:
+    """List the tenant's jobs.
+
+    Args:
+        principal: Verified caller.
+        session: Database session.
+        limit: Maximum rows to return.
+        before: Cursor from a previous page.
+
+    Returns:
+        A page of job summaries. `next_cursor` is null once the listing is
+        exhausted, which is the case whenever fewer rows come back than were
+        asked for.
+    """
+    items = await JobRepository(session).list_for_tenant(
+        principal.tenant_id, limit, before=before
+    )
+    exhausted = len(items) < limit
+    next_cursor = None if exhausted or not items else items[-1].created_at.isoformat()
+    return JobListResponse(
+        items=[JobSummary.model_validate(job) for job in items],
+        count=len(items),
+        next_cursor=next_cursor,
+    )
 
 
 @router.get(
