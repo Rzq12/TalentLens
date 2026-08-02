@@ -11,22 +11,27 @@ tenant-isolated storage, and evidence-anchored text extraction.
 
 ## What this is, and what it is not
 
-**Current state: Phase 0–1 of a phased build. There is no AI or LLM in this
-codebase yet.**
+**Current state: Phase 0–3 of a phased build. The scoring pipeline that turns a
+rubric into a ranked shortlist is not built yet.**
 
-That is deliberate. The ingestion and identity foundations are built and tested
-first, because a scoring system sitting on an unreliable parser produces
-confident nonsense. What exists today:
+The ingestion and identity foundations came first, because a scoring system
+sitting on an unreliable parser produces confident nonsense. One LLM-backed
+agent exists — the JD Analyst, which drafts a rubric from a job description —
+and every requirement it returns is validated against the same schema a
+human-authored one is. What exists today:
 
 | Working | Not built yet |
 |---|---|
-| JWT authentication with tenant isolation | Skill / experience / education extraction |
-| Resume upload (PDF, DOCX) validated on content | Semantic matching and scoring |
-| Deterministic parsing with exact character offsets | Job-requirement rubrics |
+| JWT authentication with tenant isolation | Candidate scoring runs and ranked shortlists |
+| Resume upload (PDF, DOCX) validated on content | Per-requirement verdicts with cited evidence |
+| Deterministic parsing with exact character offsets | Interview questions, gap analysis |
 | Content-hash deduplication | OCR fallback for scanned documents |
-| Job description upload (pasted text or document) | Prompt-injection sanitization |
-| Per-tenant rate limiting | Interview questions, gap analysis |
-| Structured logging, uniform error envelope | Alembic migrations |
+| Job description upload (pasted text or document) | Requirement ↔ skill-taxonomy linking |
+| Hybrid dense + lexical search with reranking | Rubric editor UI (separate frontend repo) |
+| Rubric versioning, approval, weight normalization | Auto-retraining and drift monitoring |
+| JD Analyst agent drafting rubrics from a JD | |
+| Alembic migrations, per-tenant rate limiting | |
+| Structured logging, uniform error envelope | |
 
 The eventual design is a multi-agent screening pipeline. This repository is the
 foundation it will sit on.
@@ -103,10 +108,17 @@ cp .env.example .env
 Fill in `DATABASE_URL` and `JWT_SECRET` — both are required and have no
 defaults. The application refuses to start without them, by design.
 
-Start a database:
+Start a database. The image must ship pgvector — the first migration runs
+`CREATE EXTENSION vector`, and stock `postgres:16` does not carry it:
 
 ```bash
-docker run -d --name talentlens-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=talentlens -p 5432:5432 postgres:16-alpine
+docker run -d --name talentlens-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=talentlens -p 5432:5432 pgvector/pgvector:pg16
+```
+
+Apply the migrations:
+
+```bash
+alembic upgrade head
 ```
 
 Run the API:
@@ -131,7 +143,19 @@ except `/health`.
 | `GET` | `/api/v1/resumes/{document_id}` | Document detail with extracted text |
 | `POST` | `/api/v1/jobs` | Create a job from pasted text, returns `201` |
 | `POST` | `/api/v1/jobs/upload` | Create a job from an uploaded document |
+| `GET` | `/api/v1/jobs` | List the tenant's jobs (cursor-paginated) |
 | `GET` | `/api/v1/jobs/{job_id}` | Read a job description |
+| `POST` | `/api/v1/search/candidates` | Rank candidates against a job's requirements |
+| `POST` | `/api/v1/search/similar` | Find resumes similar to a free-text query |
+| `POST` | `/api/v1/rubrics` | Create a draft rubric for a job |
+| `GET` | `/api/v1/rubrics/{rubric_version_id}` | Read one rubric version |
+| `POST` | `/api/v1/rubrics/{rubric_version_id}/requirements` | Replace a draft's criteria |
+| `POST` | `/api/v1/rubrics/{rubric_version_id}/approve` | Approve and freeze a rubric |
+| `POST` | `/api/v1/rubrics/{rubric_version_id}/versions` | Mint the next version |
+| `POST` | `/api/v1/rubrics/{rubric_version_id}/score:preview` | Score against hypothetical verdicts |
+| `GET` | `/api/v1/rubrics/templates` | List the starter templates |
+| `GET` | `/api/v1/rubrics/templates/{template_key}` | Read one starter template |
+| `POST` | `/api/v1/rubrics/templates/{template_key}:instantiate` | Seed a draft from a template |
 
 Every response and error carries a `request_id`. Errors share one shape:
 
@@ -154,22 +178,19 @@ filename over executable bytes is rejected `422`.
 pytest tests/ -q
 ```
 
-Integration tests need PostgreSQL on port 5433:
+Integration tests need PostgreSQL with pgvector on port 5433:
 
 ```bash
-docker run -d --name talentlens-test-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=talentlens_test -p 5433:5432 postgres:16-alpine
+docker run -d --name talentlens-test-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=talentlens_test -p 5433:5432 pgvector/pgvector:pg16
 ```
 
-**59 tests, 91% coverage** (floor enforced at 80%). Written test-first — see
-[docs/testing/phase-0-1.tdd.md](docs/testing/phase-0-1.tdd.md) for per-cycle
-RED/GREEN evidence.
+**582 tests (547 unit, 35 integration), 90.6% coverage** (floor enforced at 80%).
+Written test-first — the per-cycle RED/GREEN evidence lives in
+[docs/testing/](docs/testing/), one report per phase.
 
-> **Known issue.** Two integration tests currently fail when the full suite runs
-> in one session (`test_upload_job_description_as_a_pdf`,
-> `test_job_is_retrievable_and_tenant_scoped`). Both pass in isolation. The
-> cause is the per-tenant rate limiter accumulating state across tests and
-> returning `429` instead of `201`; the limiter is not reset between cases. This
-> is a test-isolation defect, not a defect in the rate limiter itself.
+The integration tests need the database above; without it they error rather than
+silently skipping, because a green suite that never touched PostgreSQL would
+misreport what was verified.
 
 Quality gates:
 
@@ -185,9 +206,12 @@ This system processes personal data about job applicants.
   `uploads/`, `storage/`, and `*.db` are gitignored — Git history is effectively
   irreversible, and a GDPR erasure request cannot reach it.
 - No dataset is bundled. Bring your own documents.
-- Resume text is treated as untrusted input by design, but the sanitization
-  pipeline that acts on that assumption is **not yet implemented**. Review the
-  known gaps in the TDD report before pointing this at real candidate data.
+- Resume text is treated as untrusted input, and the sanitization pipeline that
+  acts on that assumption is implemented in `services/sanitize.py`: spans hidden
+  by colour, zero-size fonts, or off-canvas placement are stripped and flagged
+  before any text reaches a model. Detection is deterministic, so its behaviour
+  is reproducible and auditable. Review the known gaps in the TDD reports before
+  pointing this at real candidate data.
 
 ## Contributing
 
