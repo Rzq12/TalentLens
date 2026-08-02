@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.config import Settings, get_settings
 from app.exceptions import (
@@ -21,8 +22,12 @@ from app.exceptions import (
 from app.logging import get_logger
 from app.models import Job, ResumeDocument, ResumeVersion
 from app.repositories.ingestion import JobRepository, ResumeRepository
+from app.repositories.search import ChunkRepository
 from app.security import Principal
+from app.services.embedding import get_embedding_service
+from app.services.indexing import index_resume_version
 from app.services.parser import parse_document
+from app.services.sanitize import sanitize_document
 from app.services.storage import ObjectStore, build_storage_key
 from app.utils.parsing import content_sha256, detect_media_type, sanitize_filename
 
@@ -40,6 +45,8 @@ class IngestionOutcome:
 
     document: ResumeDocument
     deduplicated: bool
+    injection_risk_score: float = 0.0
+    quarantined: bool = False
 
 
 def validate_upload(content: bytes, settings: Settings | None = None) -> str:
@@ -117,9 +124,24 @@ async def ingest_resume(
             tenant_id=str(principal.tenant_id),
             sha256=digest,
         )
-        return IngestionOutcome(document=existing, deduplicated=True)
+        prior = await repo.latest_version(principal.tenant_id, existing.id)
+        return IngestionOutcome(
+            document=existing,
+            deduplicated=True,
+            injection_risk_score=prior.injection_risk_score if prior else 0.0,
+            quarantined=prior.quarantined if prior else False,
+        )
 
-    parsed = parse_document(content, media_type)
+    # PDF/DOCX parsing is CPU-bound. Running it inline would pin the event
+    # loop for the duration and stall every concurrent request — a failure
+    # mode this project has already paid for once.
+    parsed = await run_in_threadpool(parse_document, content, media_type)
+
+    # Resume text is hostile input. Strip what is provably invisible before any
+    # of it is stored, and quarantine the document if what remains looks like an
+    # attempt to steer a downstream model.
+    sanitized = sanitize_document(parsed)
+
     safe_name = sanitize_filename(filename)
     storage_key = build_storage_key(principal.tenant_id, digest, safe_name)
     await store.put(storage_key, content, media_type)
@@ -143,8 +165,8 @@ async def ingest_resume(
         tenant_id=principal.tenant_id,
         document_id=document.id,
         version=1,
-        extracted_text=parsed.text,
-        text_sha256=content_sha256(parsed.text.encode("utf-8")),
+        extracted_text=sanitized.text,
+        text_sha256=content_sha256(sanitized.text.encode("utf-8")),
         page_offsets=[
             {
                 "page": page.page,
@@ -154,9 +176,23 @@ async def ingest_resume(
             for page in parsed.pages
         ],
         parser_version=parsed.parser_version,
+        sanitization_report=sanitized.to_report(),
+        injection_risk_score=sanitized.injection_risk_score,
+        quarantined=sanitized.should_quarantine,
     )
 
     await repo.add(document, version)
+
+    # Bridge to Phase 2: chunk, embed, and persist so search can find this resume.
+    # Quarantined versions are skipped inside index_resume_version.
+    chunk_repo = ChunkRepository(session)
+    embedder = get_embedding_service()
+    indexing_result = await index_resume_version(
+        version=version,
+        chunk_repo=chunk_repo,
+        embedder=embedder,
+    )
+
     logger.info(
         "resume_ingested",
         document_id=str(document.id),
@@ -165,8 +201,18 @@ async def ingest_resume(
         size_bytes=len(content),
         parse_status=parsed.parse_status,
         needs_ocr=parsed.needs_ocr,
+        injection_risk_score=sanitized.injection_risk_score,
+        quarantined=sanitized.should_quarantine,
+        chunks_created=indexing_result.chunks_created,
+        child_chunks=indexing_result.child_chunks,
+        parent_chunks=indexing_result.parent_chunks,
     )
-    return IngestionOutcome(document=document, deduplicated=False)
+    return IngestionOutcome(
+        document=document,
+        deduplicated=False,
+        injection_risk_score=sanitized.injection_risk_score,
+        quarantined=sanitized.should_quarantine,
+    )
 
 
 async def create_job_from_text(
@@ -238,7 +284,7 @@ async def create_job_from_upload(
         DocumentParseError: If the document is structurally unreadable.
     """
     media_type = validate_upload(content, settings)
-    parsed = parse_document(content, media_type)
+    parsed = await run_in_threadpool(parse_document, content, media_type)
     return await create_job_from_text(
         session=session,
         principal=principal,

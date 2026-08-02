@@ -26,6 +26,14 @@ class ResumeUploadResponse(BaseModel):
         default=False,
         description="True when identical bytes were already stored for this tenant.",
     )
+    injection_risk_score: float = Field(
+        default=0.0,
+        description="Deterministic prompt-injection risk in [0.0, 1.0].",
+    )
+    quarantined: bool = Field(
+        default=False,
+        description="True when the document needs human review before any further use.",
+    )
 
 
 class ResumeDetailResponse(BaseModel):
@@ -42,7 +50,15 @@ class ResumeDetailResponse(BaseModel):
     parse_status: str
     needs_ocr: bool
     parser_version: str
-    text: str = Field(description="Extracted text of the latest parsed version.")
+    text: str = Field(
+        description=(
+            "Sanitized text of the latest parsed version. Empty when the "
+            "document is quarantined."
+        )
+    )
+    injection_risk_score: float = 0.0
+    quarantined: bool = False
+    sanitization_report: dict[str, object] = Field(default_factory=dict)
     created_at: datetime
 
 
@@ -117,3 +133,36 @@ class JobResponse(BaseModel):
     source: str
     status: str
     created_at: datetime
+
+
+class JobSummary(BaseModel):
+    """One row in a job listing.
+
+    `description_raw` is deliberately absent. A listing of fifty jobs would
+    otherwise carry fifty full descriptions — the payload a caller has to
+    download to render a picker would be dominated by text nothing in the
+    list displays.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    department: str | None = None
+    location: str | None = None
+    employment_type: str | None = None
+    seniority: str | None = None
+    source: str
+    status: str
+    created_at: datetime
+
+
+class JobListResponse(BaseModel):
+    """A page of job summaries."""
+
+    items: list[JobSummary] = Field(default_factory=list)
+    count: int = 0
+    next_cursor: str | None = Field(
+        default=None,
+        description="Pass as `before` for the next page. Null when exhausted.",
+    )

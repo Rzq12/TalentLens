@@ -62,6 +62,49 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 10 * 1024 * 1024
     allowed_upload_mime_types: tuple[str, ...] = ("application/pdf", DOCX_MIME)
 
+    # --- Embedding (Phase 2) -------------------------------------------------
+    embedding_endpoint: str = "http://localhost:8080"
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_dim: int = 1024
+    embedding_batch_size: int = 32
+
+    # Ceiling on child chunks embedded per document. Embedding runs inline in the
+    # upload request while a pooled connection is held, so an unbounded document
+    # would occupy that connection for hundreds of sequential backend calls and
+    # starve `db_pool_size`. At the default child size this covers a CV far longer
+    # than any real one; excess children are dropped with a warning rather than
+    # rejecting the upload outright.
+    indexing_max_child_chunks: int = 600
+
+    # --- Search (Phase 2) ----------------------------------------------------
+    search_dense_weight: float = 0.6
+    search_lexical_weight: float = 0.4
+    search_top_k_recall: int = 20
+    search_rerank_top_k: int = 10
+
+    # --- Reranker (Phase 2) --------------------------------------------------
+    reranker_endpoint: str = ""
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+
+    # --- LLM providers (Phase 4) --------------------------------------------
+    # Keys default to empty so a developer without provider credentials can
+    # still boot the app and run the deterministic suite. A missing key is
+    # discovered when a chain is assembled, not at import time.
+    google_api_key: str = ""
+    groq_api_key: str = ""
+
+    # Model ids live here and nowhere else. Free-tier models are deprecated
+    # without notice, so recovering from one must be a config change rather
+    # than a code change.
+    gemini_model: str = "gemini-3.5-flash"
+    groq_model: str = "llama-3.3-70b-versatile"
+
+    # Pinned at zero: a screening score must be reproducible, and sampling
+    # would make the same candidate score differently on a re-run.
+    llm_temperature: float = 0.0
+    llm_timeout_seconds: float = 60.0
+    llm_max_output_tokens: int = 2048
+
     cors_allow_origins: tuple[str, ...] = ("http://localhost:5173",)
 
     log_level: str = "INFO"

@@ -182,3 +182,42 @@ def test_filename_is_sanitized_against_traversal():
     assert "\\" not in sanitize_filename(r"..\..\windows\system32\cmd.exe")
     assert sanitize_filename("resume final (1).pdf").endswith(".pdf")
     assert sanitize_filename("") == "unnamed"
+
+
+# --------------------------------------------------------------------------- #
+# Resource-exhaustion guards (PDF/DOCX bombs)                                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_pdf_over_the_page_ceiling_is_rejected():
+    """A small file may still declare enough pages to exhaust the parser."""
+    import fitz
+
+    from app.exceptions import DocumentParseError
+    from app.services.parser import MAX_PAGES, parse_document
+
+    doc = fitz.open()
+    for _ in range(MAX_PAGES + 1):
+        doc.new_page()
+    payload = doc.tobytes()
+    doc.close()
+
+    with pytest.raises(DocumentParseError):
+        parse_document(payload, "application/pdf")
+
+
+def test_pdf_at_the_page_ceiling_is_accepted():
+    """The ceiling is inclusive — exactly MAX_PAGES must still parse."""
+    import fitz
+
+    from app.services.parser import MAX_PAGES, parse_document
+
+    doc = fitz.open()
+    for _ in range(MAX_PAGES):
+        doc.new_page()
+    payload = doc.tobytes()
+    doc.close()
+
+    result = parse_document(payload, "application/pdf")
+
+    assert result.page_count == MAX_PAGES

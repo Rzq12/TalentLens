@@ -140,3 +140,59 @@ async def test_caller_cannot_override_tenant_via_query_param(client, make_token)
 
 async def test_health_is_not_protected(client):
     assert (await client.get("/health")).status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Authorization (RBAC) — regression for roles being decorative                 #
+# --------------------------------------------------------------------------- #
+
+
+async def test_read_only_role_cannot_upload_a_resume(client, make_token, minimal_pdf_bytes):
+    """A `viewer` is authenticated but must not be able to ingest documents."""
+    headers = {"Authorization": f"Bearer {make_token(roles=['viewer'])}"}
+
+    response = await client.post(
+        "/api/v1/resumes",
+        headers=headers,
+        files={"file": ("jane.pdf", minimal_pdf_bytes, "application/pdf")},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"] == "FORBIDDEN"
+
+
+async def test_read_only_role_cannot_create_a_job(client, make_token):
+    headers = {"Authorization": f"Bearer {make_token(roles=['viewer'])}"}
+
+    response = await client.post(
+        "/api/v1/jobs",
+        headers=headers,
+        json={"title": "Engineer", "description_raw": "Python and Postgres."},
+    )
+
+    assert response.status_code == 403
+
+
+async def test_token_with_no_roles_cannot_write(client, make_token):
+    headers = {"Authorization": f"Bearer {make_token(roles=[])}"}
+
+    response = await client.post(
+        "/api/v1/jobs",
+        headers=headers,
+        json={"title": "Engineer", "description_raw": "Python and Postgres."},
+    )
+
+    assert response.status_code == 403
+
+
+async def test_unknown_role_cannot_write(client, make_token):
+    """An unrecognized role grants nothing — the allowlist is closed."""
+    headers = {"Authorization": f"Bearer {make_token(roles=['superuser'])}"}
+
+    response = await client.post(
+        "/api/v1/jobs",
+        headers=headers,
+        json={"title": "Engineer", "description_raw": "Python and Postgres."},
+    )
+
+    assert response.status_code == 403

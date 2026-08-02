@@ -17,7 +17,7 @@ from app.schemas.ingestion import (
     ResumeSummary,
     ResumeUploadResponse,
 )
-from app.security import CurrentPrincipal
+from app.security import ReadPrincipal, WritePrincipal
 from app.services.ingestion import ingest_resume
 from app.services.storage import get_object_store
 from app.utils.upload import read_upload_bounded
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/resumes", tags=["resumes"])
     ),
 )
 async def upload_resume(
-    principal: CurrentPrincipal,
+    principal: WritePrincipal,
     session: DbSession,
     file: Annotated[UploadFile, File()],
 ) -> ResumeUploadResponse:
@@ -70,6 +70,8 @@ async def upload_resume(
         parse_status=document.parse_status,
         needs_ocr=document.needs_ocr,
         deduplicated=outcome.deduplicated,
+        injection_risk_score=outcome.injection_risk_score,
+        quarantined=outcome.quarantined,
     )
 
 
@@ -80,7 +82,7 @@ async def upload_resume(
     description="Returns the calling tenant's most recent resumes, newest first.",
 )
 async def list_resumes(
-    principal: CurrentPrincipal,
+    principal: ReadPrincipal,
     session: DbSession,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     before: Annotated[
@@ -113,7 +115,8 @@ async def list_resumes(
         )
         for row in rows
     ]
-    next_cursor = items[-1].created_at.isoformat() if items else None
+    exhausted = len(items) < limit
+    next_cursor = None if exhausted or not items else items[-1].created_at.isoformat()
     return ResumeListResponse(items=items, count=len(items), next_cursor=next_cursor)
 
 
@@ -128,7 +131,7 @@ async def list_resumes(
 )
 async def read_resume(
     document_id: uuid.UUID,
-    principal: CurrentPrincipal,
+    principal: ReadPrincipal,
     session: DbSession,
 ) -> ResumeDetailResponse:
     """Read one resume.
@@ -150,6 +153,11 @@ async def read_resume(
         raise ResourceNotFoundError()
 
     version = await repo.latest_version(principal.tenant_id, document_id)
+
+    # A quarantined document must not hand its text to any consumer until a
+    # human has reviewed the findings.
+    visible_text = "" if version is None or version.quarantined else version.extracted_text
+
     return ResumeDetailResponse(
         document_id=document.id,
         filename=document.filename_sanitized,
@@ -160,6 +168,9 @@ async def read_resume(
         parse_status=document.parse_status,
         needs_ocr=document.needs_ocr,
         parser_version=document.parser_version,
-        text=version.extracted_text if version else "",
+        text=visible_text,
+        injection_risk_score=version.injection_risk_score if version else 0.0,
+        quarantined=version.quarantined if version else False,
+        sanitization_report=version.sanitization_report if version else {},
         created_at=document.created_at,
     )

@@ -38,6 +38,21 @@ def _test_environment() -> Iterator[None]:
             os.environ[key] = value
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter() -> Iterator[None]:
+    """Clear rate-limit state around every test.
+
+    The limiter is process-global by design, so without this one test's
+    requests silently consume the next test's budget and unrelated cases fail
+    with 429 depending on execution order.
+    """
+    from app.main import reset_rate_limiter
+
+    reset_rate_limiter()
+    yield
+    reset_rate_limiter()
+
+
 @pytest.fixture
 def tenant_id() -> uuid.UUID:
     return uuid.UUID("11111111-1111-1111-1111-111111111111")
@@ -133,6 +148,46 @@ async def db_client() -> AsyncIterator[Any]:
 
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.drop_all)
+    await dispose_engine()
+
+
+class _SchemaInspector:
+    """Runs a synchronous callable against a fresh connection.
+
+    `run_sync` lives on `AsyncConnection`, not `AsyncEngine`, so tests that want
+    to reflect the schema need a connection opened for them. Wrapping that here
+    keeps each test to a single readable call.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        self._engine = engine
+
+    async def run_sync(self, fn: Any, *args: Any) -> Any:
+        """Execute `fn(connection, *args)` on a new connection."""
+        async with self._engine.connect() as connection:
+            return await connection.run_sync(fn, *args)
+
+
+@pytest.fixture
+async def clean_database() -> AsyncIterator[Any]:
+    """Yield a schema inspector over a database with no tables at all.
+
+    Migration tests must start from genuinely empty — including no
+    `alembic_version` row — otherwise an upgrade is a no-op and proves nothing.
+    """
+    from sqlalchemy import text
+
+    from app.db import Base, dispose_engine, get_engine
+
+    async def _wipe() -> None:
+        engine = get_engine()
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.drop_all)
+            await connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
+
+    await _wipe()
+    yield _SchemaInspector(get_engine())
+    await _wipe()
     await dispose_engine()
 
 

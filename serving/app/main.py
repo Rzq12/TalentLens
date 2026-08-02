@@ -11,6 +11,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 
+import jwt
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,11 +21,22 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import Settings, get_settings
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
-from app.routers import auth, jobs, resumes
+from app.routers import auth, jobs, resumes, rubric, search
 
 logger = get_logger(__name__)
 
 REQUEST_ID_HEADER = "X-Request-ID"
+BEARER_SCHEME = "bearer"
+MAX_ERROR_DETAIL_CHARS = 500
+
+_HTTP_ERROR_CODES = {
+    401: "UNAUTHENTICATED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    405: "METHOD_NOT_ALLOWED",
+    413: "PAYLOAD_TOO_LARGE",
+    429: "RATE_LIMITED",
+}
 
 # --------------------------------------------------------------------------- #
 # Rate limiting (in-process, per-IP token bucket)                              #
@@ -32,32 +44,92 @@ REQUEST_ID_HEADER = "X-Request-ID"
 
 _RATE_LIMIT_REQUESTS = 20  # max requests per window
 _RATE_LIMIT_WINDOW_SECONDS = 60  # window duration
+_RATE_LIMIT_MAX_TRACKED_KEYS = 10_000  # hard ceiling on limiter memory
 
 # Paths that are rate-limited (upload endpoints are the highest risk).
-_RATE_LIMITED_PREFIXES = ("/api/v1/resumes", "/api/v1/jobs")
+_RATE_LIMITED_PREFIXES = (
+    "/api/v1/resumes",
+    "/api/v1/jobs",
+    "/api/v1/search",
+    "/api/v1/rubrics",
+)
 
 _request_counts: dict[str, list[float]] = defaultdict(list)
 
 
-def _is_rate_limited(client_ip: str, now: float) -> bool:
-    """Check if a client IP has exceeded the rate limit.
+def reset_rate_limiter() -> None:
+    """Clear all rate-limit state.
 
-    Uses a sliding-window counter. Not suitable for multi-process deployments
-    — for production scale, replace with a Redis-backed limiter.
+    Exposed for tests: the limiter is process-global, so without an explicit
+    reset one test's requests consume the next test's budget.
+    """
+    _request_counts.clear()
+
+
+def _rate_limit_key(request: Request) -> str:
+    """Derive the identity a rate-limit budget is charged against.
+
+    Prefers the authenticated subject over the network address. Behind a
+    reverse proxy — which is how this is deployed — every request carries the
+    proxy's address, so keying on IP alone would collapse all callers into a
+    single shared bucket and let one client deny service to everyone.
+
+    The token is decoded without signature verification purely to bucket the
+    request; it grants nothing. Authentication still happens in `app.security`,
+    and an unusable token simply falls back to the address-based key.
 
     Args:
-        client_ip: The client's IP address.
+        request: The incoming request.
+
+    Returns:
+        An opaque bucket key.
+    """
+    header = request.headers.get("Authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() == BEARER_SCHEME and token.strip():
+        try:
+            claims = jwt.decode(
+                token.strip(),
+                options={"verify_signature": False, "verify_exp": False},
+            )
+            subject, tenant = claims.get("sub"), claims.get("tenant_id")
+            if subject and tenant:
+                return f"sub:{tenant}:{subject}"
+        except jwt.PyJWTError:
+            pass
+    return f"ip:{request.client.host if request.client else 'unknown'}"
+
+
+def _is_rate_limited(key: str, now: float) -> bool:
+    """Check whether `key` has exhausted its budget for the current window.
+
+    Uses a sliding window. Stale buckets are evicted so the tracking map cannot
+    grow without bound as callers or addresses churn — an unbounded map keyed
+    on caller-controlled input is itself a denial-of-service vector.
+
+    Not suitable for multi-process deployments; replace with a shared store
+    (Redis) before scaling horizontally.
+
+    Args:
+        key: Bucket identity from `_rate_limit_key`.
         now: Current monotonic timestamp.
 
     Returns:
-        True if the client has exceeded the rate limit.
+        True if the caller has exceeded the limit.
     """
     window_start = now - _RATE_LIMIT_WINDOW_SECONDS
-    timestamps = _request_counts[client_ip]
-    _request_counts[client_ip] = [t for t in timestamps if t > window_start]
-    if len(_request_counts[client_ip]) >= _RATE_LIMIT_REQUESTS:
+
+    if len(_request_counts) > _RATE_LIMIT_MAX_TRACKED_KEYS:
+        stale = [k for k, v in _request_counts.items() if not v or v[-1] <= window_start]
+        for k in stale:
+            del _request_counts[k]
+
+    recent = [t for t in _request_counts[key] if t > window_start]
+    if len(recent) >= _RATE_LIMIT_REQUESTS:
+        _request_counts[key] = recent
         return True
-    _request_counts[client_ip].append(now)
+    recent.append(now)
+    _request_counts[key] = recent
     return False
 
 
@@ -119,11 +191,11 @@ def _register_middleware(app: FastAPI, settings: Settings) -> None:
         # --- Rate limiting ---
         path = request.url.path
         if any(path.startswith(prefix) for prefix in _RATE_LIMITED_PREFIXES):
-            client_ip = request.client.host if request.client else "unknown"
-            if _is_rate_limited(client_ip, time.monotonic()):
+            bucket = _rate_limit_key(request)
+            if _is_rate_limited(bucket, time.monotonic()):
                 logger.warning(
                     "rate_limited",
-                    client_ip=client_ip,
+                    bucket=bucket,
                     path=path,
                     request_id=request_id,
                 )
@@ -177,12 +249,23 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def handle_http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        code = {401: "UNAUTHENTICATED", 403: "FORBIDDEN", 404: "NOT_FOUND"}.get(
-            exc.status_code, "HTTP_ERROR"
-        )
+        code = _HTTP_ERROR_CODES.get(exc.status_code, "HTTP_ERROR")
+        # Never echo `exc.detail` for server-side faults: library-raised
+        # HTTPExceptions can carry internal paths, driver messages, or query
+        # fragments. Client errors carry safe, caller-oriented text.
+        if exc.status_code >= 500:
+            message = "An unexpected error occurred."
+            logger.error(
+                "http_server_error",
+                request_id=_request_id(request),
+                status_code=exc.status_code,
+                detail=str(exc.detail)[:500],
+            )
+        else:
+            message = str(exc.detail)[:500]
         return JSONResponse(
             status_code=exc.status_code,
-            content=_error_body(_request_id(request), code, str(exc.detail), exc.status_code),
+            content=_error_body(_request_id(request), code, message, exc.status_code),
         )
 
     @app.exception_handler(RequestValidationError)
@@ -239,12 +322,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     configure_logging(level=cfg.log_level, environment=cfg.environment)
 
+    # The full API surface — every route, schema, and field name — is a useful
+    # map for an attacker. Publish it everywhere except production.
+    expose_docs = cfg.environment != "production"
+
     app = FastAPI(
         title=cfg.app_name,
         version=cfg.version,
         summary="AI CV Screener — ingestion and identity surface.",
-        docs_url="/docs",
-        openapi_url="/openapi.json",
+        docs_url="/docs" if expose_docs else None,
+        redoc_url="/redoc" if expose_docs else None,
+        openapi_url="/openapi.json" if expose_docs else None,
     )
 
     _register_middleware(app, cfg)
@@ -258,4 +346,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router, prefix=cfg.api_v1_prefix)
     app.include_router(resumes.router, prefix=cfg.api_v1_prefix)
     app.include_router(jobs.router, prefix=cfg.api_v1_prefix)
+    app.include_router(rubric.router, prefix=cfg.api_v1_prefix)
+    app.include_router(search.router, prefix=cfg.api_v1_prefix)
     return app
