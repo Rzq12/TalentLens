@@ -133,7 +133,7 @@ desktop.ini
 # Tooling / vendored plugin cache present in this working tree
 # ---------------------------------------------------------------------------
 ECC/
-
+.agent
 # ---------------------------------------------------------------------------
 # Frontend (React + Vite), for when the web/ workspace lands
 # ---------------------------------------------------------------------------
