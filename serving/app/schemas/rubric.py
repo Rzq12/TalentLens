@@ -57,6 +57,11 @@ SeniorityLevel = Literal[
     "manager",
     "director",
 ]
+# The verdict vocabulary a caller may submit to the score preview. It mirrors
+# `app.services.scoring.VERDICTS` deliberately rather than importing it: this is
+# the wire contract, and pinning it here means a change to the internal
+# vocabulary shows up as a failing test rather than as a silently widened API.
+PreviewVerdict = Literal["met", "partial", "missing", "unclear"]
 
 
 class RequirementInput(BaseModel):
@@ -181,3 +186,108 @@ class RubricResponse(BaseModel):
     aggregation_formula_version: str
     source: RubricSource
     requirements: list[RequirementResponse] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Score preview                                                                #
+# --------------------------------------------------------------------------- #
+
+
+class VerdictInput(BaseModel):
+    """One hypothetical judgement supplied by the caller.
+
+    These verdicts are synthetic. The preview endpoint exists so a recruiter can
+    see how the rubric behaves before any candidate is run against it, so the
+    caller states the outcome rather than the system deriving it.
+    """
+
+    requirement_id: uuid.UUID
+    verdict: PreviewVerdict
+
+
+class ScorePreviewRequest(BaseModel):
+    """Payload for previewing a rubric's score under hypothetical verdicts.
+
+    The list is bounded by ``MAX_REQUIREMENTS`` because a rubric cannot hold
+    more criteria than that, so a longer list can only be wrong.
+    """
+
+    verdicts: list[VerdictInput] = Field(min_length=1, max_length=MAX_REQUIREMENTS)
+
+
+class ContributionResponse(BaseModel):
+    """What one requirement contributed to the previewed score."""
+
+    requirement_id: uuid.UUID
+    ordinal: int
+    text: str
+    weight: Decimal
+    is_must_have: bool
+    verdict: PreviewVerdict
+    points: Decimal = Field(description="Weight times verdict credit, on the 0-100 scale.")
+
+
+class ScorePreviewResponse(BaseModel):
+    """The previewed score with the full breakdown behind it.
+
+    ``raw_score`` is published alongside ``score`` so a capped result stays
+    explainable: without it, a candidate held down by a failed must-have is
+    indistinguishable from one who simply matched poorly.
+    """
+
+    score: Decimal = Field(description="Final score, 0-100, after any must-have cap.")
+    raw_score: Decimal = Field(description="Score before the cap was applied.")
+    formula_version: str
+    must_have_failed: bool
+    cap_applied: bool = Field(
+        description="Whether the cap actually lowered the score, not merely whether "
+        "a must-have failed.",
+    )
+    failed_must_have_ids: list[uuid.UUID] = Field(default_factory=list)
+    contributions: list[ContributionResponse] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Starter templates                                                            #
+# --------------------------------------------------------------------------- #
+
+
+class TemplateSummary(BaseModel):
+    """One catalogue entry, without its criteria.
+
+    The listing omits the requirements deliberately. A picker needs the label and
+    the size of what it is offering, not seven paragraphs per entry, and the full
+    set is one request away.
+    """
+
+    key: str = Field(description="URL-safe slug; the path segment used to fetch the template.")
+    name: str
+    role_family: str = Field(description="Broad grouping used to organize the picker.")
+    requirement_count: int = Field(description="How many criteria instantiating this would add.")
+
+
+class TemplateListResponse(BaseModel):
+    """The whole shipped catalogue, ordered by display name."""
+
+    templates: list[TemplateSummary] = Field(default_factory=list)
+
+
+class TemplateDetailResponse(BaseModel):
+    """One template with the criteria it would seed a draft with.
+
+    The weights published here are the template's *relative* weights, exactly as
+    a caller would submit them. They are not normalized: normalization happens
+    when a draft is created, and publishing a normalized figure would imply the
+    template had already been apportioned against a specific set.
+    """
+
+    key: str
+    name: str
+    role_family: str
+    requirements: list[RequirementInput] = Field(default_factory=list)
+
+
+class TemplateInstantiateRequest(BaseModel):
+    """Payload for seeding a new draft rubric from a template."""
+
+    job_id: uuid.UUID = Field(description="Job the new draft is authored against.")

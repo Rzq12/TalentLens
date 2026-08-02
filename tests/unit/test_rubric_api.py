@@ -232,9 +232,9 @@ def test_the_rubric_router_is_registered_under_the_versioned_prefix() -> None:
     prefix = f"{get_settings().api_v1_prefix}/rubrics"
     paths = set(create_app().openapi()["paths"])
 
-    assert any(path.startswith(prefix) for path in paths), (
-        f"no route under {prefix} — the rubric router was not included in create_app"
-    )
+    assert any(
+        path.startswith(prefix) for path in paths
+    ), f"no route under {prefix} — the rubric router was not included in create_app"
 
 
 def test_every_rubric_route_documents_itself() -> None:
@@ -247,9 +247,7 @@ def test_every_rubric_route_documents_itself() -> None:
 
     schema = create_app().openapi()
     rubric_paths = {
-        path: methods
-        for path, methods in schema["paths"].items()
-        if path.startswith(f"{RUBRICS}")
+        path: methods for path, methods in schema["paths"].items() if path.startswith(f"{RUBRICS}")
     }
     assert rubric_paths, "the OpenAPI document contains no rubric paths"
 
@@ -360,9 +358,7 @@ async def test_a_recruiter_may_author_a_rubric(make_token) -> None:
         ("job_id is not a uuid", {"job_id": "not-a-uuid"}),
     ],
 )
-async def test_a_malformed_rubric_payload_is_rejected(
-    make_token, label, overrides
-) -> None:
+async def test_a_malformed_rubric_payload_is_rejected(make_token, label, overrides) -> None:
     """Bad input must fail at the schema boundary, not inside the service.
 
     Defence in depth: the service also validates, but a 422 here means no
@@ -403,9 +399,7 @@ async def test_a_requirement_list_beyond_the_ceiling_is_rejected(make_token) -> 
     from app.schemas.rubric import MAX_REQUIREMENTS
 
     session = _StubSession(scalar=0)
-    oversized = [
-        _requirement_payload(text=f"Criterion {i}.") for i in range(MAX_REQUIREMENTS + 1)
-    ]
+    oversized = [_requirement_payload(text=f"Criterion {i}.") for i in range(MAX_REQUIREMENTS + 1)]
 
     async with _app_client(session) as ac:
         response = await ac.post(
@@ -441,9 +435,7 @@ async def test_a_requirement_list_at_the_ceiling_is_accepted(make_token) -> None
     assert sum(weights) == Decimal("1.0000")
 
 
-@pytest.mark.parametrize(
-    "value", ["<script>alert(1)</script>", "Sr.", "very senior", "SENIOR", ""]
-)
+@pytest.mark.parametrize("value", ["<script>alert(1)</script>", "Sr.", "very senior", "SENIOR", ""])
 async def test_a_free_text_seniority_floor_is_rejected(make_token, value) -> None:
     """A floor only means something if both sides read it the same way.
 
@@ -938,3 +930,341 @@ async def test_the_rate_limit_refusal_uses_the_standard_error_envelope(make_toke
     body = throttled.json()
     assert body["status_code"] == 429
     assert uuid.UUID(body["request_id"])
+
+
+# --------------------------------------------------------------------------- #
+# Starter templates                                                            #
+# --------------------------------------------------------------------------- #
+
+
+TEMPLATES = f"{RUBRICS}/templates"
+
+
+async def test_the_template_listing_is_not_shadowed_by_the_version_detail_route(
+    make_token,
+) -> None:
+    """``/rubrics/templates`` must not be parsed as ``/rubrics/{version_id}``.
+
+    Both routes match the same shape. If the parameterized one is declared
+    first, FastAPI coerces "templates" into a UUID and the listing answers 422 —
+    a defect that exists only because the two live in one router, so no service
+    test can catch it.
+    """
+    async with _app_client(_StubSession()) as ac:
+        response = await ac.get(TEMPLATES, headers={"Authorization": f"Bearer {make_token()}"})
+
+    assert response.status_code == 200, response.text
+
+
+async def test_the_listing_covers_every_shipped_template(make_token) -> None:
+    """A catalogue entry the API does not publish cannot be instantiated."""
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    async with _app_client(_StubSession()) as ac:
+        response = await ac.get(TEMPLATES, headers={"Authorization": f"Bearer {make_token()}"})
+
+    assert response.status_code == 200, response.text
+    keys = [item["key"] for item in response.json()["templates"]]
+    assert set(keys) == set(RUBRIC_TEMPLATES)
+
+
+async def test_the_listing_is_ordered_by_name_so_the_picker_is_stable(make_token) -> None:
+    """Definition order is an implementation detail of the catalogue module.
+
+    A picker rendering the listing verbatim would reorder itself whenever a
+    template was added mid-file.
+    """
+    async with _app_client(_StubSession()) as ac:
+        response = await ac.get(TEMPLATES, headers={"Authorization": f"Bearer {make_token()}"})
+
+    names = [item["name"] for item in response.json()["templates"]]
+    assert names == sorted(names)
+
+
+async def test_a_listed_template_reports_how_many_criteria_it_would_add(make_token) -> None:
+    """The count is what tells a recruiter the size of what they are accepting."""
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    async with _app_client(_StubSession()) as ac:
+        response = await ac.get(TEMPLATES, headers={"Authorization": f"Bearer {make_token()}"})
+
+    counts = {item["key"]: item["requirement_count"] for item in response.json()["templates"]}
+    assert counts == {key: len(t.requirements) for key, t in RUBRIC_TEMPLATES.items()}
+
+
+async def test_the_listing_omits_the_criteria_themselves(make_token) -> None:
+    """A picker needs labels, not seven paragraphs per entry.
+
+    The full set is one request away, so shipping it inline would make the
+    listing grow with the catalogue for no caller that needs it.
+    """
+    async with _app_client(_StubSession()) as ac:
+        response = await ac.get(TEMPLATES, headers={"Authorization": f"Bearer {make_token()}"})
+
+    assert "requirements" not in response.json()["templates"][0]
+
+
+@pytest.mark.parametrize("role", _READ_ONLY_ROLES)
+async def test_a_read_only_role_may_browse_the_catalogue(make_token, role) -> None:
+    """Reading application-authored data writes nothing and reveals no tenant data."""
+    async with _app_client(_StubSession()) as ac:
+        response = await ac.get(
+            TEMPLATES, headers={"Authorization": f"Bearer {make_token(roles=[role])}"}
+        )
+
+    assert response.status_code == 200, response.text
+
+
+async def test_browsing_the_catalogue_requires_authentication(client) -> None:
+    """The catalogue ships with the build, but the surface stays behind a token.
+
+    An unauthenticated route here would be a free enumeration of the product's
+    scoring vocabulary and a cost-free path into the app for anyone.
+    """
+    response = await client.get(TEMPLATES)
+
+    assert response.status_code in (401, 403)
+
+
+async def test_reading_one_template_returns_its_criteria(make_token) -> None:
+    """This is what the editor loads to preview a template before accepting it."""
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    key = next(iter(RUBRIC_TEMPLATES))
+    expected = RUBRIC_TEMPLATES[key]
+
+    async with _app_client(_StubSession()) as ac:
+        response = await ac.get(
+            f"{TEMPLATES}/{key}", headers={"Authorization": f"Bearer {make_token()}"}
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["key"] == key
+    assert [item["text"] for item in body["requirements"]] == [
+        requirement.text for requirement in expected.requirements
+    ]
+
+
+async def test_a_published_template_weight_is_relative_not_normalized(make_token) -> None:
+    """The template's weights are what a caller would submit, unapportioned.
+
+    Publishing a normalized figure would imply the template had already been
+    weighted against a specific set, and a caller echoing it back would get a
+    different result than the preview showed.
+    """
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    key = next(iter(RUBRIC_TEMPLATES))
+
+    async with _app_client(_StubSession()) as ac:
+        response = await ac.get(
+            f"{TEMPLATES}/{key}", headers={"Authorization": f"Bearer {make_token()}"}
+        )
+
+    weights = [Decimal(str(item["weight"])) for item in response.json()["requirements"]]
+    assert sum(weights) > Decimal("1"), weights
+
+
+async def test_an_unknown_template_key_is_a_404(make_token) -> None:
+    """A bare KeyError from the catalogue would surface as a 500."""
+    async with _app_client(_StubSession()) as ac:
+        response = await ac.get(
+            f"{TEMPLATES}/no-such-template",
+            headers={"Authorization": f"Bearer {make_token()}"},
+        )
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "NOT_FOUND"
+
+
+async def test_the_404_for_an_unknown_template_does_not_echo_the_key(make_token) -> None:
+    """The key arrives from the URL and the message reaches the response body.
+
+    Echoing it back makes the endpoint a reflection primitive.
+    """
+    async with _app_client(_StubSession()) as ac:
+        response = await ac.get(
+            f"{TEMPLATES}/<script>alert(1)</script>",
+            headers={"Authorization": f"Bearer {make_token()}"},
+        )
+
+    assert response.status_code == 404
+    assert "<script>" not in response.text
+
+
+async def test_instantiating_a_template_yields_a_draft_a_human_must_approve(
+    make_token,
+) -> None:
+    """A template is a starting point, never an authority.
+
+    If instantiating produced an approved rubric, the catalogue would be
+    scoring candidates with criteria nobody signed off on.
+    """
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    key = next(iter(RUBRIC_TEMPLATES))
+    session = _StubSession(scalar=0)
+
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            f"{TEMPLATES}/{key}:instantiate",
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json={"job_id": str(_JOB)},
+        )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["status"] == "draft"
+    assert body["content_hash"] is None
+
+
+async def test_an_instantiated_draft_carries_every_criterion_from_the_template(
+    make_token,
+) -> None:
+    """A silently truncated set would read as the template and score differently."""
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    key = next(iter(RUBRIC_TEMPLATES))
+    expected = RUBRIC_TEMPLATES[key]
+    session = _StubSession(scalar=0)
+
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            f"{TEMPLATES}/{key}:instantiate",
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json={"job_id": str(_JOB)},
+        )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert [item["text"] for item in body["requirements"]] == [
+        requirement.text for requirement in expected.requirements
+    ]
+    assert [item["is_must_have"] for item in body["requirements"]] == [
+        requirement.is_must_have for requirement in expected.requirements
+    ]
+
+
+async def test_an_instantiated_draft_has_its_weights_normalized(make_token) -> None:
+    """Template weights are relative; a stored rubric's are a probability mass."""
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    key = next(iter(RUBRIC_TEMPLATES))
+    session = _StubSession(scalar=0)
+
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            f"{TEMPLATES}/{key}:instantiate",
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json={"job_id": str(_JOB)},
+        )
+
+    weights = [Decimal(str(item["weight"])) for item in response.json()["requirements"]]
+    assert sum(weights) == Decimal("1.0000"), weights
+
+
+async def test_an_instantiated_draft_records_that_it_came_from_a_template(
+    make_token,
+) -> None:
+    """Provenance is auditable: "template" is a distinct source from "manual".
+
+    A regulator asking how a rubric was produced gets a different answer for a
+    shipped starting point than for criteria a recruiter wrote themselves.
+    """
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    key = next(iter(RUBRIC_TEMPLATES))
+    session = _StubSession(scalar=0)
+
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            f"{TEMPLATES}/{key}:instantiate",
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json={"job_id": str(_JOB)},
+        )
+
+    assert response.json()["source"] == "template"
+
+
+@pytest.mark.parametrize("role", _READ_ONLY_ROLES)
+async def test_a_read_only_role_cannot_instantiate_a_template(make_token, role) -> None:
+    """Instantiating writes a rubric version and its criteria — writers only."""
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    key = next(iter(RUBRIC_TEMPLATES))
+    session = _StubSession(scalar=0)
+
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            f"{TEMPLATES}/{key}:instantiate",
+            headers={"Authorization": f"Bearer {make_token(roles=[role])}"},
+            json={"job_id": str(_JOB)},
+        )
+
+    assert response.status_code == 403
+    assert session.added == [], "a refused caller staged rows"
+
+
+async def test_instantiating_against_an_invisible_job_is_a_404(make_token) -> None:
+    """The template path must be bound to a visible job like every other author path.
+
+    With ``scalar=None`` the existence probe finds nothing — the state a missing
+    id and another tenant's id both produce.
+    """
+    from app.models import Requirement, RubricVersion
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    key = next(iter(RUBRIC_TEMPLATES))
+    session = _StubSession(scalar=None)
+
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            f"{TEMPLATES}/{key}:instantiate",
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json={"job_id": str(uuid.uuid4())},
+        )
+
+    assert response.status_code == 404, response.text
+    assert not [row for row in session.added if isinstance(row, RubricVersion)]
+    assert not [row for row in session.added if isinstance(row, Requirement)]
+
+
+async def test_instantiating_an_unknown_template_is_a_404(make_token) -> None:
+    session = _StubSession(scalar=0)
+
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            f"{TEMPLATES}/no-such-template:instantiate",
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json={"job_id": str(_JOB)},
+        )
+
+    assert response.status_code == 404
+    assert session.added == []
+
+
+async def test_instantiating_cannot_choose_the_tenant_the_rubric_belongs_to(
+    make_token,
+) -> None:
+    """Tenant comes from the verified token only — never from the payload."""
+    from app.models import RubricVersion
+    from app.services.rubric_templates import RUBRIC_TEMPLATES
+
+    key = next(iter(RUBRIC_TEMPLATES))
+    session = _StubSession(scalar=0)
+
+    async with _app_client(session) as ac:
+        response = await ac.post(
+            f"{TEMPLATES}/{key}:instantiate",
+            headers={"Authorization": f"Bearer {make_token()}"},
+            json={
+                "job_id": str(_JOB),
+                "tenant_id": str(uuid.UUID("22222222-2222-2222-2222-222222222222")),
+            },
+        )
+
+    assert response.status_code in (201, 422)
+    if response.status_code == 201:
+        versions = [row for row in session.added if isinstance(row, RubricVersion)]
+        assert versions and versions[0].tenant_id == _TENANT
