@@ -13,6 +13,7 @@ from decimal import Decimal
 
 from pgvector.sqlalchemy import HALFVEC, Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -25,7 +26,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -343,3 +344,282 @@ class Requirement(TimestampMixin, Base):
     embedding: Mapped[list[float] | None] = mapped_column(HALFVEC(1024), nullable=True)
 
     rubric_version: Mapped[RubricVersion] = relationship(back_populates="requirements")
+
+
+class ScreeningRun(TimestampMixin, Base):
+    """One execution of the scoring pipeline over a job's candidate pool.
+
+    ``rubric_version_id`` is RESTRICT rather than CASCADE: a run is the record
+    of which criteria produced a ranking, so the rubric it cites must not be
+    deletable out from under it. The job itself CASCADEs — deleting a job is a
+    deliberate purge of everything scoped to it.
+
+    ``triggered_by`` is a plain uuid, not a foreign key: the ``users`` table
+    described in ARCHITECTURE.md §6.4 does not exist in this repo yet, and
+    declaring the constraint would make the migration unrunnable.
+    """
+
+    __tablename__ = "screening_runs"
+    __table_args__ = (Index("ix_screening_runs_tenant_job", "tenant_id", "job_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rubric_version_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("rubric_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, default="interactive")
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Per-stage survivor counts for the retrieval funnel, so a shortlist can be
+    # explained as "N of M candidates reached the judge" without re-running it.
+    funnel_stage_counts: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    workflow_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    triggered_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+
+    cost_usd: Mapped[Decimal] = mapped_column(
+        Numeric(10, 4), nullable=False, default=Decimal("0")
+    )
+    total_input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    total_output_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    cache_read_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    cache_write_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    scores: Mapped[list[CandidateScore]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        lazy="noload",
+    )
+
+
+class CandidateScore(TimestampMixin, Base):
+    """One candidate's aggregated result within a run.
+
+    ``raw_weighted`` keeps four decimal places while ``overall_score`` keeps
+    two: the weighted sum is the input to capping and rounding, and storing it
+    pre-rounding is what makes a score replayable. ``cap_applied`` is NULL when
+    no must-have cap fired, so "was this candidate capped" is answerable without
+    recomputing the rubric.
+
+    ``candidate_id`` and ``profile_id`` are plain uuids rather than foreign
+    keys: the ``candidates`` and ``candidate_profiles`` tables described in
+    ARCHITECTURE.md §6.3 are not built in this repo, and declaring the
+    constraints would make the migration unrunnable.
+    """
+
+    __tablename__ = "candidate_scores"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "candidate_id", name="uq_candidate_scores_run_candidate"
+        ),
+        Index("ix_candidate_scores_run_rank", "run_id", "rank"),
+        Index("ix_candidate_scores_tenant_run", "tenant_id", "run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("screening_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+
+    overall_score: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    raw_weighted: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    cap_applied: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Assigned in a second pass once every candidate in the run is scored, so a
+    # partially-completed run has scores without ranks rather than wrong ranks.
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    retrieval_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rerank_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    recommendation: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    recommendation_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Provenance for replay: which aggregation formula produced this number.
+    aggregation_formula_version: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="v1"
+    )
+
+    run: Mapped[ScreeningRun] = relationship(back_populates="scores")
+    verdicts: Mapped[list[RequirementVerdict]] = relationship(
+        back_populates="score",
+        cascade="all, delete-orphan",
+        lazy="noload",
+    )
+
+
+class RequirementVerdict(TimestampMixin, Base):
+    """The judge's call on one requirement for one candidate.
+
+    ``weight_at_scoring`` and ``contribution`` are stored rather than derived:
+    the rubric can mint a new version with different weights, and a verdict must
+    stay explainable against the weights that actually produced it.
+
+    ``retrieved_chunk_ids`` is the exposure record — exactly what the judge saw.
+    Without it a "missing" verdict is indistinguishable from a retrieval failure.
+
+    ``requirement_id`` is RESTRICT: a verdict cites a criterion, so the
+    criterion must outlive it. Override columns are all nullable and set
+    together when a human corrects the judge.
+    """
+
+    __tablename__ = "requirement_verdicts"
+    __table_args__ = (
+        UniqueConstraint(
+            "score_id", "requirement_id", name="uq_requirement_verdicts_score_req"
+        ),
+        Index("ix_requirement_verdicts_tenant_score", "tenant_id", "score_id"),
+        Index("ix_requirement_verdicts_cache_key", "result_cache_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    score_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("candidate_scores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requirement_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("requirements.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    verdict: Mapped[str] = mapped_column(String(16), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    weight_at_scoring: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    contribution: Mapped[Decimal] = mapped_column(Numeric(6, 4), nullable=False)
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    judge_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    judge_prompt_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    judge_effort: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    cache_hit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    retrieved_chunk_ids: Mapped[list[uuid.UUID] | None] = mapped_column(
+        ARRAY(PG_UUID(as_uuid=True)), nullable=True
+    )
+    result_cache_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    overridden_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    override_verdict: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    overridden_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    score: Mapped[CandidateScore] = relationship(back_populates="verdicts")
+    evidence_spans: Mapped[list[EvidenceSpanRecord]] = relationship(
+        back_populates="verdict",
+        cascade="all, delete-orphan",
+        lazy="noload",
+    )
+
+
+class EvidenceSpanRecord(TimestampMixin, Base):
+    """A verbatim quote from a resume backing one verdict.
+
+    Named ``EvidenceSpanRecord`` rather than ``EvidenceSpan`` because
+    ``app.services.search`` already exposes an ``EvidenceSpan`` dataclass for
+    in-flight search results; this is the persisted form.
+
+    ``verbatim_verified`` is set by the automated check that re-slices the
+    resume text at ``[start_char, end_char)`` and compares it to
+    ``quoted_text`` — the anti-hallucination gate. A row with it False is a
+    quote the judge produced that the source does not contain.
+
+    ``chunk_id`` is SET NULL on delete: re-indexing a resume replaces its
+    chunks, and the citation survives that because ``resume_version_id`` plus
+    the character offsets locate the quote independently of any chunk row.
+    """
+
+    __tablename__ = "evidence_spans"
+    __table_args__ = (
+        Index("ix_evidence_spans_tenant_verdict", "tenant_id", "verdict_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    # Nullable so a span can be recorded while its verdict is still being built.
+    verdict_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("requirement_verdicts.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    resume_version_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("resume_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("resume_chunks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    quoted_text: Mapped[str] = mapped_column(Text, nullable=False)
+    verbatim_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    relevance: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    verdict: Mapped[RequirementVerdict | None] = relationship(
+        back_populates="evidence_spans"
+    )
