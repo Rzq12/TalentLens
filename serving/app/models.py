@@ -140,9 +140,22 @@ class ResumeChunk(TimestampMixin, Base):
     """
 
     __tablename__ = "resume_chunks"
+    # Every index the migration creates is declared here, including the two
+    # PostgreSQL-specific ones. Leaving them out of the metadata does not make
+    # them optional — it makes `alembic revision --autogenerate` emit a
+    # `drop_index` for each on the next run, quietly removing the indexes both
+    # halves of hybrid search depend on.
     __table_args__ = (
         Index("ix_resume_chunks_tenant_document", "tenant_id", "document_id"),
         Index("ix_resume_chunks_tenant_id", "tenant_id"),
+        Index("ix_resume_chunks_content_tsv", "content_tsv", postgresql_using="gin"),
+        Index(
+            "ix_resume_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
