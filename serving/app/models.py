@@ -13,8 +13,10 @@ from decimal import Decimal
 
 from pgvector.sqlalchemy import HALFVEC, Vector
 from sqlalchemy import (
+    ARRAY,
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -840,4 +842,345 @@ class BiasFlag(TimestampMixin, Base):
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
     judge_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Phase 0 foundation tables — tenants, users, candidates, audit
+# ---------------------------------------------------------------------------
+
+
+class Tenant(TimestampMixin, Base):
+    """One customer account. Not tenant-scoped — this IS the tenant."""
+
+    __tablename__ = "tenants"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    plan: Mapped[str] = mapped_column(String(32), nullable=False, default="free")
+    retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=365)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class User(TimestampMixin, Base):
+    """A human user. Cross-tenant — membership is via user_roles."""
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class UserRole(TimestampMixin, Base):
+    """Per-tenant role assignment. Composite PK: (user_id, tenant_id, role)."""
+
+    __tablename__ = "user_roles"
+    __table_args__ = (
+        Index("ix_user_roles_tenant", "tenant_id"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False, primary_key=True)
+
+
+class ApiKey(TimestampMixin, Base):
+    """Programmatic access key per tenant."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    key_prefix: Mapped[str] = mapped_column(String(12), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class AuditEvent(TimestampMixin, Base):
+    """Tamper-evident audit log. Hash-chained."""
+
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        Index("ix_audit_events_tenant_time", "tenant_id", "occurred_at"),
+        Index("ix_audit_events_resource", "resource_type", "resource_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    details: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=func.now
+    )
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chain_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class Candidate(TimestampMixin, Base):
+    """A job applicant within a tenant."""
+
+    __tablename__ = "candidates"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "email", name="uq_candidates_tenant_email"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    consent_purpose: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="candidate_screening"
+    )
+    consent_granted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class CandidateProfile(TimestampMixin, Base):
+    """Structured extraction from a resume version."""
+
+    __tablename__ = "candidate_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    resume_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("resume_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    extraction_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending"
+    )
+    total_experience_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    skills: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    education: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    languages: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    latest_role: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    extraction_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    extraction_prompt_version: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+
+
+class SkillGap(TimestampMixin, Base):
+    """One identified skill gap for a candidate."""
+
+    __tablename__ = "skill_gaps"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    score_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("candidate_scores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requirement_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    gap_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    suggested_probe: Mapped[str | None] = mapped_column(Text, nullable=True)
+    weight: Mapped[float] = mapped_column(Float, nullable=False)
+
+
+class InterviewKit(TimestampMixin, Base):
+    """One set of interview questions for a scored candidate."""
+
+    __tablename__ = "interview_kits"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    score_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("candidate_scores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+
+class InterviewQuestion(TimestampMixin, Base):
+    """One question in an interview kit."""
+
+    __tablename__ = "interview_questions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    targets_requirement_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    difficulty: Mapped[str] = mapped_column(String(16), nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expected_signal: Mapped[str | None] = mapped_column(Text, nullable=True)
+    follow_ups: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    kit_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("interview_kits.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+
+class Decision(TimestampMixin, Base):
+    """A human recruiter's advance/reject decision with mandatory reason."""
+
+    __tablename__ = "decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    score_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("candidate_scores.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    decided_by: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    agreed_with_ai: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=func.now
+    )
+
+
+class FairnessSnapshot(TimestampMixin, Base):
+    """Nightly fairness metrics for one tenant."""
+
+    __tablename__ = "fairness_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "computed_for_date",
+            name="uq_fairness_snapshots_tenant_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    computed_for_date: Mapped["datetime.date"] = mapped_column(
+        Date, nullable=False
+    )
+    metrics: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=func.now
+    )
+
+
+class ChatSession(TimestampMixin, Base):
+    """One recruiter chat session (multi-turn RAG)."""
+
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    last_active_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class ChatMessage(TimestampMixin, Base):
+    """One message in a chat session."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    citations: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    tool_calls: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB, nullable=True
+    )
 

@@ -11,27 +11,32 @@ tenant-isolated storage, and evidence-anchored text extraction.
 
 ## What this is, and what it is not
 
-**Current state: Phase 0–3 of a phased build. The scoring pipeline that turns a
-rubric into a ranked shortlist is not built yet.**
+**Current state: Phase 0–4 of a phased build. Core scoring pipeline and LLM
+agents are in development. All 31 ORM models, 15 table RLS policies, and
+agent infrastructure are in place.**
 
 The ingestion and identity foundations came first, because a scoring system
-sitting on an unreliable parser produces confident nonsense. One LLM-backed
-agent exists — the JD Analyst, which drafts a rubric from a job description —
-and every requirement it returns is validated against the same schema a
-human-authored one is. What exists today:
+sitting on an unreliable parser produces confident nonsense. What exists today:
 
-| Working | Not built yet |
+| Working | In progress / Next |
 |---|---|
-| JWT authentication with tenant isolation | Candidate scoring runs and ranked shortlists |
-| Resume upload (PDF, DOCX) validated on content | Per-requirement verdicts with cited evidence |
-| Deterministic parsing with exact character offsets | Interview questions, gap analysis |
+| JWT + Supabase JWKS authentication with tenant isolation | Semantic Matching agent (LLM judge, #7) |
+| Resume upload (PDF, DOCX) validated on content | Candidate scoring runs and ranked shortlists |
+| Deterministic parsing with exact character offsets | Per-requirement verdicts with cited evidence |
 | Content-hash deduplication | OCR fallback for scanned documents |
-| Job description upload (pasted text or document) | Requirement ↔ skill-taxonomy linking |
-| Hybrid dense + lexical search with reranking | Rubric editor UI (separate frontend repo) |
-| Rubric versioning, approval, weight normalization | Auto-retraining and drift monitoring |
-| JD Analyst agent drafting rubrics from a JD | |
-| Alembic migrations, per-tenant rate limiting | |
-| Structured logging, uniform error envelope | |
+| Job description upload (pasted text or document) | Agent #3-#5 (Skill/Exp/Edu extraction, T2) |
+| Hybrid dense + lexical search with reranking | Retrieval funnel (94% LLM call reduction) |
+| Rubric versioning, approval, weight normalization | Skill gap, interview question agents (#8-#9) |
+| JD Analyst agent drafting rubrics from a JD (#3) | Fraud, bias, recommendation agents (#11-#13) |
+| Agent ABC + Semantic Matching judge (#7) **NEW** | Recruiter Chat (RAG, #14) |
+| In-process orchestrator + workflow runner **NEW** | Resume Improvement (candidate-facing, #10) |
+| RLS on all 25 tenant-scoped tables **NEW** | |
+| ONNX e5-small embedding (CPU, no GPU) **NEW** | |
+| Rate-limit scheduler with key pooling **NEW** | |
+| SSE progress streaming **NEW** | |
+| Alembic migrations, 31 ORM models | |
+| Structured logging, uniform error envelope, /metrics | |
+| Dockerfile + docker-compose for local dev | |
 
 The eventual design is a multi-agent screening pipeline. This repository is the
 foundation it will sit on.
@@ -137,6 +142,7 @@ except `/health`.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Liveness probe (unauthenticated) |
+| `GET` | `/metrics` | Prometheus metrics (unauthenticated) |
 | `GET` | `/api/v1/auth/me` | Identity of the verified caller |
 | `POST` | `/api/v1/resumes` | Upload a PDF or DOCX resume, returns `202` |
 | `GET` | `/api/v1/resumes` | List the tenant's resumes (cursor-paginated) |

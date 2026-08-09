@@ -38,6 +38,16 @@ TENANT_TABLES = [
     "ats_compliance_reports",
     "fraud_flags",
     "bias_flags",
+    "api_keys",
+    "audit_events",
+    "candidates",
+    "candidate_profiles",
+    "chat_sessions",
+    "decisions",
+    "fairness_snapshots",
+    "interview_kits",
+    "skill_gaps",
+    "user_roles",
 ]
 
 
