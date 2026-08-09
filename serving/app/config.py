@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     jwt_audience: str = "authenticated"
     jwt_algorithms: tuple[str, ...] = ("HS256",)
 
+    # Supabase Auth JWKS URL. When set, the app validates bearer tokens
+    # against Supabase's public JWKS endpoint rather than a shared secret.
+    # This is the revised-stack auth strategy (ARCHITECTURE-AGENTS.md §1.3).
+    supabase_auth_jwks_url: str = ""
+
     storage_backend: Literal["memory", "supabase"] = "memory"
     supabase_url: str = ""
     supabase_service_key: str = ""

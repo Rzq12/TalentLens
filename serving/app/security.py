@@ -52,11 +52,14 @@ class Principal:
 
 
 def decode_access_token(token: str, settings: Settings | None = None) -> Principal:
-    """Verify a JWT and project it into a `Principal`.
+    """Verify a JWT and project it into a ``Principal``.
+
+    When ``supabase_auth_jwks_url`` is set (revised stack), validation uses
+    Supabase's public JWKS endpoint. Otherwise falls back to a shared secret
+    (current custom-JWT mode).
 
     Signature, expiry, issuer, and audience are all verified. The accepted
-    algorithm list comes from configuration and never includes "none", so an
-    unsigned token cannot authenticate.
+    algorithm list comes from configuration and never includes ``none``.
 
     Args:
         token: The raw JWT, without the "Bearer " prefix.
@@ -71,6 +74,17 @@ def decode_access_token(token: str, settings: Settings | None = None) -> Princip
             missing a claim required to establish tenancy.
     """
     cfg = settings or get_settings()
+
+    # Supabase Auth path — asymmetric JWKS validation
+    if cfg.supabase_auth_jwks_url:
+        return _decode_supabase_token(token, cfg)
+
+    # Legacy shared-secret path
+    return _decode_shared_secret_token(token, cfg)
+
+
+def _decode_shared_secret_token(token: str, cfg: Settings) -> Principal:
+    """Verify a JWT against a shared HMAC secret."""
     try:
         claims: dict[str, Any] = jwt.decode(
             token,
@@ -89,6 +103,45 @@ def decode_access_token(token: str, settings: Settings | None = None) -> Princip
         tenant_id = uuid.UUID(str(claims["tenant_id"]))
     except (KeyError, ValueError) as err:
         logger.warning("auth_claims_invalid", reason=str(err))
+        raise AuthenticationError() from err
+
+    raw_roles = claims.get("roles") or ()
+    roles = tuple(str(r) for r in raw_roles) if isinstance(raw_roles, list | tuple) else ()
+    return Principal(user_id=user_id, tenant_id=tenant_id, roles=roles)
+
+
+def _decode_supabase_token(token: str, cfg: Settings) -> Principal:
+    """Verify a JWT against Supabase's JWKS endpoint.
+
+    Supabase issues RS256-signed JWTs. The public key is fetched from
+    the JWKS endpoint and cached. Claims structure: ``sub`` = user UUID,
+    ``app_metadata.tenant_id`` custom claim for tenancy.
+    """
+    import httpx
+
+    from jwt import PyJWKClient
+
+    try:
+        jwks = PyJWKClient(cfg.supabase_auth_jwks_url, cache_keys=True)
+        signing_key = jwks.get_signing_key_from_jwt(token)
+        claims: dict[str, Any] = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=cfg.jwt_audience,
+            options={"require": ["exp", "sub"]},
+        )
+    except jwt.PyJWTError as err:
+        logger.warning("auth_supabase_token_rejected", reason=type(err).__name__)
+        raise AuthenticationError() from err
+
+    try:
+        user_id = uuid.UUID(str(claims["sub"]))
+        # tenant_id from custom claims set via Supabase Postgres hook
+        app_meta = claims.get("app_metadata") or {}
+        tenant_id = uuid.UUID(str(app_meta.get("tenant_id", claims.get("tenant_id", ""))))
+    except (KeyError, ValueError) as err:
+        logger.warning("auth_supabase_claims_invalid", reason=str(err))
         raise AuthenticationError() from err
 
     raw_roles = claims.get("roles") or ()

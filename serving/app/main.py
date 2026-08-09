@@ -17,11 +17,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import Response
 
 from app.config import Settings, get_settings
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
+from app.metrics import app_info, http_requests_total, http_request_duration_seconds
 from app.routers import auth, jobs, resumes, rubric, search
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 logger = get_logger(__name__)
 
@@ -323,6 +326,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         """Report that the process is alive."""
         return {"status": "ok", "version": cfg.version}
+
+    @app.get("/metrics", summary="Prometheus metrics", description="Unauthenticated.")
+    async def metrics() -> Response:
+        """Expose Prometheus metrics in text format."""
+        return Response(
+            content=generate_latest(),
+            media_type=CONTENT_TYPE_LATEST,
+        )
+
+    # Set app info from config (non-request-scoped, called once at startup)
+    app_info.info({"version": cfg.version, "environment": cfg.environment})
 
     app.include_router(auth.router, prefix=cfg.api_v1_prefix)
     app.include_router(resumes.router, prefix=cfg.api_v1_prefix)
