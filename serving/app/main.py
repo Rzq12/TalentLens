@@ -20,10 +20,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import Response
 
 from app.config import Settings, get_settings
+from app.db import set_tenant_context as _set_tenant_context
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
 from app.metrics import app_info, http_requests_total, http_request_duration_seconds
 from app.routers import auth, jobs, resumes, rubric, search
+from app.security import decode_access_token as _decode_access_token
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 logger = get_logger(__name__)
@@ -171,6 +173,18 @@ def _register_middleware(app: FastAPI, settings: Settings) -> None:
         except ValueError:
             request_id = str(uuid.uuid4())
         request.state.request_id = request_id
+
+        # --- RLS tenant context ---
+        # Extract tenant from bearer token (best-effort — skips unauthenticated
+        # endpoints like /health and /metrics).
+        try:
+            header = request.headers.get("Authorization", "")
+            scheme, _, token = header.partition(" ")
+            if scheme.lower() == "bearer" and token.strip():
+                principal = _decode_access_token(token.strip())
+                _set_tenant_context(principal.tenant_id)
+        except Exception:
+            pass  # /health, /metrics, auth errors — RLS stays unset
 
         # --- Rate limiting ---
         path = request.url.path
