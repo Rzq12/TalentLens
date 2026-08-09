@@ -68,9 +68,12 @@ class Settings(BaseSettings):
     allowed_upload_mime_types: tuple[str, ...] = ("application/pdf", DOCX_MIME)
 
     # --- Embedding (Phase 2) -------------------------------------------------
+    # In-process ONNX e5-small (revised stack, ARCHITECTURE-AGENTS.md §1.1).
+    # Set EMBEDDING_BACKEND=tei to use external HuggingFace TEI endpoint instead.
+    embedding_backend: Literal["onnx", "tei"] = "onnx"
     embedding_endpoint: str = "http://localhost:8080"
-    embedding_model: str = "BAAI/bge-m3"
-    embedding_dim: int = 1024
+    embedding_model: str = "intfloat/multilingual-e5-small"
+    embedding_dim: int = 384
     embedding_batch_size: int = 32
 
     # Ceiling on child chunks embedded per document. Embedding runs inline in the
@@ -87,9 +90,12 @@ class Settings(BaseSettings):
     search_top_k_recall: int = 20
     search_rerank_top_k: int = 10
 
-    # --- Reranker (Phase 2) --------------------------------------------------
+    # --- Reranker (Phase 2, optional) ------------------------------------------
+    # Set to "onnx" for in-process CPU reranker or "tei" for external endpoint.
+    # "noop" passes through scores unchanged (safe default for dev/test).
+    reranker_backend: Literal["noop", "onnx", "tei"] = "noop"
     reranker_endpoint: str = ""
-    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # --- LLM providers (Phase 4) --------------------------------------------
     # Keys default to empty so a developer without provider credentials can
