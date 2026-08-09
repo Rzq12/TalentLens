@@ -623,3 +623,218 @@ class EvidenceSpanRecord(TimestampMixin, Base):
     verdict: Mapped[RequirementVerdict | None] = relationship(
         back_populates="evidence_spans"
     )
+
+
+# ---------------------------------------------------------------------------
+# Revised-stack tables (ARCHITECTURE-AGENTS.md §10)
+# ---------------------------------------------------------------------------
+
+
+class RunTask(TimestampMixin, Base):
+    """One unit of work in the screening pipeline queue.
+
+    Replaces a Celery/Arq broker. Claimed via ``SELECT ... FOR UPDATE
+    SKIP LOCKED``. A rate-limit reschedule sets ``not_before`` and resets
+    ``status='pending'`` without consuming a retry attempt — distinct
+    from a genuine failure (status='failed', attempt incremented).
+    """
+
+    __tablename__ = "run_tasks"
+    __table_args__ = (
+        Index("ix_run_tasks_run_status", "run_id", "status", "not_before"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("screening_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    stage: Mapped[str] = mapped_column(String(64), nullable=False)
+    candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    requirement_group: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    not_before: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payload: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    result: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AgentResultCache(TimestampMixin, Base):
+    """Durable agent result cache — the reproducibility mechanism.
+
+    A cache hit skips an LLM call entirely, so a re-run with an unchanged
+    rubric costs ~zero tokens and produces an identical score.
+    """
+
+    __tablename__ = "agent_result_cache"
+    __table_args__ = (
+        Index("ix_agent_result_cache_tenant_agent", "tenant_id", "agent_name"),
+    )
+
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    output: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class RateLimitBucket(Base):
+    """Per-provider token-bucket state. UNLOGGED — losing it on crash
+    is an accepted degradation (bucket resets, worst case: burst of
+    provider 429s absorbed by the rate-limit classifier).
+    """
+
+    __tablename__ = "rate_limit_buckets"
+    __table_args__ = (
+        Index(
+            "ix_rate_limit_buckets_lookup",
+            "provider",
+            "model",
+            "api_key_hash",
+            "window",
+            "window_start",
+            unique=True,
+        ),
+        {"prefixes": ["UNLOGGED"]},
+    )
+
+    provider: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model: Mapped[str] = mapped_column(String(128), primary_key=True)
+    api_key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window: Mapped[str] = mapped_column(
+        String(16), primary_key=True
+    )  # 'rpm' | 'tpm' | 'rpd'
+    window_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True
+    )
+    used: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    cap: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class RunCheckpoint(TimestampMixin, Base):
+    """Heartbeat for resume-after-restart. One row per run."""
+
+    __tablename__ = "run_checkpoints"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("screening_runs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    last_stage: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    heartbeat_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=func.now
+    )
+    resumed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class AtsComplianceReport(TimestampMixin, Base):
+    """ATS keyword/format compliance sidecar — never blended into overall_score."""
+
+    __tablename__ = "ats_compliance_reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    resume_version_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    rubric_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+
+    keyword_coverage: Mapped[float] = mapped_column(Float, nullable=False)
+    matched_keywords: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String), nullable=True
+    )
+    missing_keywords: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String), nullable=True
+    )
+    format_flags: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    compliance_score: Mapped[float] = mapped_column(Float, nullable=False)
+    is_ats_safe: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=func.now
+    )
+
+
+class FraudFlag(TimestampMixin, Base):
+    """Deception signals — distinct from verdicts, never scored."""
+
+    __tablename__ = "fraud_flags"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    score_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("candidate_scores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    signal_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    related_requirement_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    judge_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class BiasFlag(TimestampMixin, Base):
+    """Language-bias findings in generated text — distinct from verdicts."""
+
+    __tablename__ = "bias_flags"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    score_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("candidate_scores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    text_excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    bias_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    judge_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
