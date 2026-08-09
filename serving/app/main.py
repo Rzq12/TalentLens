@@ -17,30 +17,31 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import Response
 
 from app.config import Settings, get_settings
+from app.db import set_tenant_context as _set_tenant_context
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
+from app.metrics import app_info, http_requests_total, http_request_duration_seconds
 from app.routers import auth, jobs, resumes, rubric, search
+from app.security import decode_access_token as _decode_access_token
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 logger = get_logger(__name__)
 
 REQUEST_ID_HEADER = "X-Request-ID"
-BEARER_SCHEME = "bearer"
+FORWARDED_FOR_HEADER = "X-Forwarded-For"
 MAX_ERROR_DETAIL_CHARS = 500
 
-_HTTP_ERROR_CODES = {
-    401: "UNAUTHENTICATED",
-    403: "FORBIDDEN",
-    404: "NOT_FOUND",
-    405: "METHOD_NOT_ALLOWED",
-    413: "PAYLOAD_TOO_LARGE",
-    429: "RATE_LIMITED",
-}
-
 # --------------------------------------------------------------------------- #
-# Rate limiting (in-process, per-IP token bucket)                              #
+# Rate limiting (in-process, per-IP sliding window)                            #
 # --------------------------------------------------------------------------- #
+#
+# Keyed by client IP. When deployed behind a trusted reverse proxy the proxy
+# is expected to set X-Forwarded-For; otherwise every request appears to come
+# from the proxy and shares one bucket. In-process only — fine for a single
+# worker; if you scale out, move this to the proxy or a shared store.
 
 _RATE_LIMIT_REQUESTS = 20  # max requests per window
 _RATE_LIMIT_WINDOW_SECONDS = 60  # window duration
@@ -67,16 +68,10 @@ def reset_rate_limiter() -> None:
 
 
 def _rate_limit_key(request: Request) -> str:
-    """Derive the identity a rate-limit budget is charged against.
+    """Derive the IP a rate-limit budget is charged against.
 
-    Prefers the authenticated subject over the network address. Behind a
-    reverse proxy — which is how this is deployed — every request carries the
-    proxy's address, so keying on IP alone would collapse all callers into a
-    single shared bucket and let one client deny service to everyone.
-
-    The token is decoded without signature verification purely to bucket the
-    request; it grants nothing. Authentication still happens in `app.security`,
-    and an unusable token simply falls back to the address-based key.
+    Uses X-Forwarded-For when present (deployment behind a trusted reverse
+    proxy), falling back to the direct peer address.
 
     Args:
         request: The incoming request.
@@ -84,19 +79,13 @@ def _rate_limit_key(request: Request) -> str:
     Returns:
         An opaque bucket key.
     """
-    header = request.headers.get("Authorization", "")
-    scheme, _, token = header.partition(" ")
-    if scheme.lower() == BEARER_SCHEME and token.strip():
-        try:
-            claims = jwt.decode(
-                token.strip(),
-                options={"verify_signature": False, "verify_exp": False},
-            )
-            subject, tenant = claims.get("sub"), claims.get("tenant_id")
-            if subject and tenant:
-                return f"sub:{tenant}:{subject}"
-        except jwt.PyJWTError:
-            pass
+    forwarded = request.headers.get(FORWARDED_FOR_HEADER)
+    if forwarded:
+        # First entry is the original client; later entries are intermediate
+        # proxies. Trimming whitespace handles the common "x, y" formatting.
+        first = forwarded.split(",", 1)[0].strip()
+        if first:
+            return f"ip:{first}"
     return f"ip:{request.client.host if request.client else 'unknown'}"
 
 
@@ -106,9 +95,6 @@ def _is_rate_limited(key: str, now: float) -> bool:
     Uses a sliding window. Stale buckets are evicted so the tracking map cannot
     grow without bound as callers or addresses churn — an unbounded map keyed
     on caller-controlled input is itself a denial-of-service vector.
-
-    Not suitable for multi-process deployments; replace with a shared store
-    (Redis) before scaling horizontally.
 
     Args:
         key: Bucket identity from `_rate_limit_key`.
@@ -188,6 +174,18 @@ def _register_middleware(app: FastAPI, settings: Settings) -> None:
             request_id = str(uuid.uuid4())
         request.state.request_id = request_id
 
+        # --- RLS tenant context ---
+        # Extract tenant from bearer token (best-effort — skips unauthenticated
+        # endpoints like /health and /metrics).
+        try:
+            header = request.headers.get("Authorization", "")
+            scheme, _, token = header.partition(" ")
+            if scheme.lower() == "bearer" and token.strip():
+                principal = _decode_access_token(token.strip())
+                _set_tenant_context(principal.tenant_id)
+        except Exception:
+            pass  # /health, /metrics, auth errors — RLS stays unset
+
         # --- Rate limiting ---
         path = request.url.path
         if any(path.startswith(prefix) for prefix in _RATE_LIMITED_PREFIXES):
@@ -249,7 +247,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def handle_http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        code = _HTTP_ERROR_CODES.get(exc.status_code, "HTTP_ERROR")
+        code = "HTTP_ERROR"
         # Never echo `exc.detail` for server-side faults: library-raised
         # HTTPExceptions can carry internal paths, driver messages, or query
         # fragments. Client errors carry safe, caller-oriented text.
@@ -342,6 +340,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         """Report that the process is alive."""
         return {"status": "ok", "version": cfg.version}
+
+    @app.get("/metrics", summary="Prometheus metrics", description="Unauthenticated.")
+    async def metrics() -> Response:
+        """Expose Prometheus metrics in text format."""
+        return Response(
+            content=generate_latest(),
+            media_type=CONTENT_TYPE_LATEST,
+        )
+
+    # Set app info from config (non-request-scoped, called once at startup)
+    app_info.info({"version": cfg.version, "environment": cfg.environment})
 
     app.include_router(auth.router, prefix=cfg.api_v1_prefix)
     app.include_router(resumes.router, prefix=cfg.api_v1_prefix)

@@ -37,6 +37,7 @@ dev = [
     "ruff>=0.8,<0.9",
     "mypy>=1.13,<2",
     "types-defusedxml",
+    "prometheus-client>=0.21,<1",
 ]
 
 [tool.setuptools.packages.find]

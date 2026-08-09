@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from app.config import get_settings
 from app.logging import get_logger
 from app.models import ResumeChunk, ResumeVersion
+from app.repositories.search import ChunkRepositoryProtocol
 from app.services.chunking import (
     CHILD_CHUNK_WORDS,
     PARENT_CHUNK_WORDS,
@@ -138,7 +139,7 @@ def _to_orm_chunk(
 async def index_resume_version(
     *,
     version: ResumeVersion,
-    chunk_repo: object,
+    chunk_repo: ChunkRepositoryProtocol,
     embedder: EmbeddingService,
     replace_existing: bool = False,
     child_words: int = CHILD_CHUNK_WORDS,
@@ -150,8 +151,7 @@ async def index_resume_version(
     Args:
         version: The parsed version to index.
         chunk_repo: Repository exposing ``upsert_chunks`` and
-            ``delete_by_document``. Typed loosely so tests can pass a double
-            without a live session.
+            ``delete_by_document``.
         embedder: Embedding service used for child chunks.
         replace_existing: If True, delete the document's existing chunks first.
             Set this when re-parsing or re-embedding; leaving it False on a
@@ -209,7 +209,7 @@ async def index_resume_version(
         )
 
     if replace_existing:
-        deleted = await chunk_repo.delete_by_document(  # type: ignore[attr-defined]
+        deleted = await chunk_repo.delete_by_document(
             version.tenant_id, version.document_id
         )
         logger.info(
@@ -226,14 +226,12 @@ async def index_resume_version(
     # would hold that connection long enough to starve the pool for every other
     # tenant. Parents are kept regardless: they cost no embedding calls and are
     # only reachable through a child, so dropping children never orphans one.
-    truncated_children = 0
-    if len(children) > max_child_chunks:
-        truncated_children = len(children) - max_child_chunks
+    truncated_children = max(0, len(children) - max_child_chunks)
+    if truncated_children:
         children = children[:max_child_chunks]
-        dropped_ids = {info.chunk_id for info in chunk_infos if not info.is_parent}
-        dropped_ids -= {info.chunk_id for info in children}
+        child_ids = {info.chunk_id for info in children}
         chunk_infos = [
-            info for info in chunk_infos if info.chunk_id not in dropped_ids
+            info for info in chunk_infos if info.is_parent or info.chunk_id in child_ids
         ]
         logger.warning(
             "indexing_truncated_child_chunks",
@@ -274,7 +272,7 @@ async def index_resume_version(
         for info in chunk_infos
     ]
 
-    await chunk_repo.upsert_chunks(rows)  # type: ignore[attr-defined]
+    await chunk_repo.upsert_chunks(rows)
 
     parent_count = sum(1 for info in chunk_infos if info.is_parent)
     logger.info(

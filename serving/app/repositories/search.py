@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +29,20 @@ class ChunkWithScore:
 
     chunk: ResumeChunk
     score: float
+
+
+class ChunkRepositoryProtocol(Protocol):
+    """Interface required by indexing and search services."""
+
+    async def upsert_chunks(self, chunks: list[ResumeChunk]) -> None:
+        """Persist a batch of chunks."""
+        ...
+
+    async def delete_by_document(
+        self, tenant_id: uuid.UUID, document_id: uuid.UUID
+    ) -> int:
+        """Delete all chunks for a document."""
+        ...
 
 
 class ChunkRepository:

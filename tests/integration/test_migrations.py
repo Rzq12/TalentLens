@@ -17,6 +17,10 @@ EXPECTED_TABLES = {
     "jobs",
     "rubric_versions",
     "requirements",
+    "screening_runs",
+    "candidate_scores",
+    "requirement_verdicts",
+    "evidence_spans",
 }
 
 
