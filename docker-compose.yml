@@ -1,0 +1,50 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: talentlens
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  db-test:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: talentlens_test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "7860:7860"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/talentlens
+      JWT_SECRET: dev-secret-change-in-production-32-chars
+      JWT_ISSUER: https://localhost/auth/v1
+      JWT_AUDIENCE: authenticated
+      STORAGE_BACKEND: memory
+      ENVIRONMENT: development
+      LOG_LEVEL: DEBUG
+      CORS_ALLOW_ORIGINS: '["http://localhost:5173"]'
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
