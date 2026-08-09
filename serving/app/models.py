@@ -655,6 +655,9 @@ class RunTask(TimestampMixin, Base):
     )
 
     stage: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_name: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=""
+    )
     candidate_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True
     )
