@@ -15,14 +15,12 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import Settings, get_settings
 from app.db import set_tenant_context as _set_tenant_context
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
-from app.metrics import app_info
 from app.routers import auth, jobs, resumes, rubric, screening, search
 from app.security import decode_access_token as _decode_access_token
 
@@ -342,13 +340,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/metrics", summary="Prometheus metrics", description="Unauthenticated.")
     async def metrics() -> Response:
         """Expose Prometheus metrics in text format."""
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
         return Response(
             content=generate_latest(),
             media_type=CONTENT_TYPE_LATEST,
         )
 
     # Set app info from config (non-request-scoped, called once at startup)
-    app_info.info({"version": cfg.version, "environment": cfg.environment})
+    try:
+        from app.metrics import app_info  # noqa: F811
+
+        app_info.info({"version": cfg.version, "environment": cfg.environment})
+    except ImportError:
+        pass  # prometheus_client not installed — metrics disabled
 
     app.include_router(auth.router, prefix=cfg.api_v1_prefix)
     app.include_router(resumes.router, prefix=cfg.api_v1_prefix)
