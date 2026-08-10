@@ -103,12 +103,14 @@ class Settings(BaseSettings):
     # discovered when a chain is assembled, not at import time.
     google_api_key: str = ""
     groq_api_key: str = ""
+    hf_api_key: str = ""
 
     # Model ids live here and nowhere else. Free-tier models are deprecated
     # without notice, so recovering from one must be a config change rather
     # than a code change.
     gemini_model: str = "gemini-3.5-flash"
     groq_model: str = "llama-3.3-70b-versatile"
+    hf_model: str = "Qwen/Qwen2.5-7B-Instruct"
 
     # Pinned at zero: a screening score must be reproducible, and sampling
     # would make the same candidate score differently on a re-run.
