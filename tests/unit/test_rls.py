@@ -14,7 +14,6 @@ The integration test (requires PostgreSQL) is deferred to Phase 0 completion.
 from __future__ import annotations
 
 import re
-import uuid
 from pathlib import Path
 
 import pytest
@@ -32,7 +31,6 @@ def _declared_tenant_tables() -> set[str]:
     content = models_path.read_text()
 
     # Extract all __tablename__ values by finding lines with the pattern
-    tablenames = set(re.findall(r'__tablename__\s*=\s*"(\w+)"', content))
 
     # Now find which of those have tenant_id
     tenant_tables: set[str] = set()

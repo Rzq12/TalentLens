@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 from typing import ClassVar
 
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.exceptions import EmbeddingServiceUnavailableError
 from app.logging import get_logger
 
@@ -90,7 +90,6 @@ class OnnxEmbeddingService:
             raise EmbeddingServiceUnavailableError(
                 f"ONNX embedding model unavailable: {self._load_error or 'unknown'}"
             )
-        import numpy as np
 
         inputs = self._tokenizer(
             texts,
@@ -116,6 +115,6 @@ class OnnxEmbeddingService:
         return results[0]
 
 
-def get_embedding_service() -> "OnnxEmbeddingService":
+def get_embedding_service() -> OnnxEmbeddingService:
     """Return the process-wide ONNX embedding singleton."""
     return OnnxEmbeddingService()

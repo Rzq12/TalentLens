@@ -139,7 +139,8 @@ class RateLimitScheduler:
         estimated_tokens: int = 1000,
     ) -> tuple[str, bool]:
         """Try each key in round-robin order. Returns (key, True) on success,
-        or ('', False) if all keys are exhausted."""
+        or ('', False) if all keys are exhausted.
+        """
         for key in api_keys:
             if self.reserve(provider, model, key, estimated_tokens):
                 return key, True

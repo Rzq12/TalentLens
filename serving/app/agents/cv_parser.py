@@ -81,8 +81,7 @@ class CvParserAgent(DeterministicAgent[CvParseInput, CvParseOutput]):
         guessed/partial profile.
         """
         try:
-            from app.services.parser import extract_text, get_parser_version
-            from app.utils.parsing import detect_mime_type
+            from app.services.parser import get_parser_version  # noqa: F401 — used below
         except ImportError as exc:
             return AgentResult(
                 status="failed",
@@ -133,7 +132,8 @@ class CvParserAgent(DeterministicAgent[CvParseInput, CvParseOutput]):
             doc.close()
             return text, page_count
 
-        if payload.mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        docx_mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        if payload.mime_type == docx_mime:
             from docx import Document
 
             doc = Document(io.BytesIO(payload.content))

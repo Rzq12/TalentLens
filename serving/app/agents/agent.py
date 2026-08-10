@@ -132,7 +132,7 @@ class LLMAgent(Agent[TIn, TOut], ABC):
     prompt_version: ClassVar[str]
 
     @abstractmethod
-    def build_request(self, payload: TIn, ctx: AgentContext) -> "LLMRequest":  # noqa: F821  — circular with base.py
+    def build_request(self, payload: TIn, ctx: AgentContext) -> LLMRequest:  # type: ignore[name-defined]  # noqa: F821 — circular with base.py
         """Build the provider request from typed payload and context.
 
         The system prompt / rubric prefix is stable and cacheable.

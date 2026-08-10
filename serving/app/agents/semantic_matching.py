@@ -19,8 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
-from decimal import Decimal
+from dataclasses import dataclass
 from typing import ClassVar, Final, Literal
 
 import structlog
@@ -367,7 +366,6 @@ class SemanticMatchingAgent(LLMAgent[JudgeInput, JudgeOutput]):
             parse exhaustion.
         """
         request = self.build_request(payload, ctx)
-        last_parse_error: OutputParseError | None = None
 
         for attempt in (1, 2):
             if attempt == 2:
@@ -407,8 +405,7 @@ class SemanticMatchingAgent(LLMAgent[JudgeInput, JudgeOutput]):
 
             try:
                 output = self.parse_response(response.text, payload)
-            except OutputParseError as exc:
-                last_parse_error = exc
+            except OutputParseError:
                 logger.warning("judge_parse_failed", attempt=attempt)
                 continue
 

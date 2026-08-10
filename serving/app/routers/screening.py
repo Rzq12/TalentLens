@@ -9,14 +9,13 @@ GET /api/v1/screening/runs/{run_id}/results — ranked candidates
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, status
+from fastapi import APIRouter, status
 from fastapi.responses import StreamingResponse
 
 from app.db import DbSession, get_sessionmaker
 from app.exceptions import ResourceNotFoundError, ValidationFailedError
-from app.models import ScreeningRun, RubricVersion, CandidateScore
+from app.models import CandidateScore, RubricVersion, ScreeningRun
 from app.security import ReadPrincipal, WritePrincipal
 from app.services.orchestration import AgentRegistry, Orchestrator
 from app.services.sse import EventType, get_sse_manager

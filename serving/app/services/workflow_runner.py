@@ -11,16 +11,13 @@ ARCHITECTURE-AGENTS.md §2.5 — resumption after container restart is just
 
 from __future__ import annotations
 
-import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import RunTask, RunCheckpoint, AgentResultCache
-from app.services.ports import DrainResult
+from app.models import AgentResultCache, RunCheckpoint, RunTask
 
 
 class InProcessWorkflowRunner:
@@ -96,7 +93,7 @@ class InProcessWorkflowRunner:
             except Exception:
                 pass  # advisory lock may not be available in SQLite/test
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             stmt = (
                 select(RunTask)
                 .where(
@@ -148,7 +145,7 @@ class InProcessWorkflowRunner:
     async def heartbeat(self, run_id: uuid.UUID, stage: str) -> None:
         """Update (or insert) the checkpoint heartbeat for a run."""
         async with self._session_factory() as session:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             checkpoint = await session.get(RunCheckpoint, run_id)
             if checkpoint:
                 checkpoint.last_stage = stage
@@ -170,7 +167,7 @@ class InProcessWorkflowRunner:
         container restart or HF Spaces sleep/wake cycle.
         """
         async with self._session_factory() as session:
-            cutoff = datetime.now(timezone.utc)
+            cutoff = datetime.now(UTC)
             # Simple approach: find checkpoints with old heartbeat
             # In production, also filter on screening_runs.status='running'
             stmt = (
@@ -202,8 +199,8 @@ class InProcessWorkflowRunner:
         async with self._session_factory() as session:
             expires = None
             if ttl_seconds:
-                expires = datetime.now(timezone.utc).timestamp() + ttl_seconds
-                expires = datetime.fromtimestamp(expires, tz=timezone.utc)
+                expires = datetime.now(UTC).timestamp() + ttl_seconds
+                expires = datetime.fromtimestamp(expires, tz=UTC)
             stmt = insert(AgentResultCache).values(
                 cache_key=cache_key,
                 tenant_id=tenant_id,

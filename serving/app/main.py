@@ -11,22 +11,20 @@ import uuid
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 
-import jwt
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi.responses import Response
 
 from app.config import Settings, get_settings
 from app.db import set_tenant_context as _set_tenant_context
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
-from app.metrics import app_info, http_requests_total, http_request_duration_seconds
+from app.metrics import app_info
 from app.routers import auth, jobs, resumes, rubric, screening, search
 from app.security import decode_access_token as _decode_access_token
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 logger = get_logger(__name__)
 

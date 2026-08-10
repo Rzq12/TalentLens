@@ -17,11 +17,10 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Final
 
-from app.agents.agent import Agent, AgentContext, AgentResult
+from app.agents.agent import Agent, AgentContext
 from app.models import RunTask as RunTaskModel
 from app.services.ports import DrainResult, StageOutcome
 
@@ -232,4 +231,5 @@ class Orchestrator:
 
 class CoreStageFailedError(Exception):
     """A CORE stage task failed — the run cannot proceed with an incomplete
-    verdict set."""
+    verdict set.
+    """
