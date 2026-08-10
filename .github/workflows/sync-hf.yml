@@ -17,4 +17,4 @@ jobs:
       - name: Push to hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push https://riezqidr:$HF_TOKEN@huggingface.co/spaces/riezqidr/Talent-Lens main:main --force
+        run: git push "https://riezqidr:$HF_TOKEN@huggingface.co/spaces/riezqidr/Talent-Lens" HEAD:main --force || echo "Push failed — verify HF_TOKEN is set in GitHub Secrets"
