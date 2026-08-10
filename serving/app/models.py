@@ -28,7 +28,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -707,9 +707,11 @@ class AgentResultCache(TimestampMixin, Base):
 
 
 class RateLimitBucket(Base):
-    """Per-provider token-bucket state. UNLOGGED — losing it on crash
-    is an accepted degradation (bucket resets, worst case: burst of
-    provider 429s absorbed by the rate-limit classifier).
+    """Per-provider token-bucket state.
+
+    UNLOGGED — losing it on crash is an accepted degradation (bucket
+    resets, worst case: burst of provider 429s absorbed by the rate-limit
+    classifier).
     """
 
     __tablename__ = "rate_limit_buckets"
@@ -1126,7 +1128,7 @@ class FairnessSnapshot(TimestampMixin, Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), nullable=False, index=True
     )
-    computed_for_date: Mapped["datetime.date"] = mapped_column(
+    computed_for_date: Mapped[datetime.date] = mapped_column(
         Date, nullable=False
     )
     metrics: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)

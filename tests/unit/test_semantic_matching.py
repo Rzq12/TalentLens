@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from unittest.mock import AsyncMock
 
 import pytest
 
-from app.agents.agent import AgentContext, AgentResult, OutputParseError
+from app.agents.agent import AgentContext, OutputParseError
 from app.agents.base import FailoverChain, LLMRequest, LLMResponse
 from app.agents.semantic_matching import (
     JUDGE_PROMPT_VERSION,
@@ -205,13 +204,21 @@ def test_parse_valid_response():
 
 
 def test_parse_response_with_markdown_fence():
-    text = '```json\n{"verdicts": [{"requirement_index": 0, "verdict": "met", "confidence": 0.8, "reasoning": "Ok.", "evidence_quote": null, "years_evidenced": null}]}\n```'
+    v = (
+        '{"verdicts": '
+        '[{"requirement_index": 0, "verdict": "met", "confidence": 0.8, '
+        '"reasoning": "Ok.", "evidence_quote": null, "years_evidenced": null}]}'
+    )
+    text = f"```json\n{v}\n```"''
     result = parse_judge_response(text, expected_count=1)
     assert len(result.verdicts) == 1
 
 
 def test_parse_response_wrong_count_raises_output_parse_error():
-    text = '{"verdicts": [{"requirement_index": 0, "verdict": "met", "confidence": 0.8, "reasoning": "Ok.", "evidence_quote": null, "years_evidenced": null}]}'
+    text = (
+        '{"verdicts": [{"requirement_index": 0, "verdict": "met", "confidence": 0.8,'
+        ' "reasoning": "Ok.", "evidence_quote": null, "years_evidenced": null}]}'
+    )
     with pytest.raises(OutputParseError, match="expected 3"):
         parse_judge_response(text, expected_count=3)
 
@@ -223,7 +230,10 @@ def test_parse_response_no_verdicts_raises():
 
 
 def test_parse_response_invalid_verdict_value_raises():
-    text = '{"verdicts": [{"requirement_index": 0, "verdict": "excellent", "confidence": 0.8, "reasoning": "Ok.", "evidence_quote": null, "years_evidenced": null}]}'
+    text = (
+        '{"verdicts": [{"requirement_index": 0, "verdict": "excellent", "confidence": 0.8,'
+        ' "reasoning": "Ok.", "evidence_quote": null, "years_evidenced": null}]}'
+    )
     with pytest.raises(OutputParseError):
         parse_judge_response(text, expected_count=1)
 
@@ -241,7 +251,7 @@ def test_parse_response_not_json_raises():
 class _MockProvider:
     """A provider that returns a fixed response."""
 
-    def __init__(self, answer: LLMResponse | None = None):
+    def __init__(self, answer: LLMResponse | None = None) -> None:
         self._answer = answer or LLMResponse(text="{}", model="mock", provider="mock")
         self.name = "mock"
         self.model = "mock-model"
@@ -290,7 +300,6 @@ async def test_agent_run_ok(sample_input, ctx):
 
 @pytest.mark.asyncio
 async def test_agent_run_repair_on_first_parse_failure(sample_input, ctx):
-    import json
 
     call_count = [0]
 

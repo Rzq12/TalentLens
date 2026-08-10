@@ -14,7 +14,7 @@ ARCHITECTURE-AGENTS.md §2.7 — funnel math, unchanged from original draft.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,8 +25,6 @@ from app.services.embedding import EmbeddingService
 from app.services.reranker import RerankerService
 from app.services.search import (
     reciprocal_rank_fusion,
-    group_by_candidate,
-    EvidenceSpan,
 )
 
 logger = get_logger(__name__)

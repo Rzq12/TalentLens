@@ -16,11 +16,14 @@ import asyncio
 import json
 import time
 import uuid
+from collections.abc import AsyncGenerator
 from enum import Enum
 from typing import Any
 
 
 class EventType(str, Enum):
+    """SSE event types for screening run progress."""
+
     RUN_STARTED = "run.started"
     RUN_COMPLETE = "run.complete"
     RUN_FAILED = "run.failed"
@@ -54,7 +57,9 @@ class SSEManager:
             "timestamp": time.time(),
         })
 
-    async def subscribe(self, run_id: uuid.UUID, cancel_event: asyncio.Event):
+    async def subscribe(
+        self, run_id: uuid.UUID, cancel_event: asyncio.Event,
+    ) -> AsyncGenerator[bytes, None]:
         """Async generator yielding SSE-formatted bytes for a run.
 
         Yields until the run completes/fails/cancels or the connection
@@ -75,7 +80,7 @@ class SSEManager:
                     EventType.RUN_CANCELLED.value,
                 }:
                     break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send heartbeat
                 yield _format_sse(EventType.HEARTBEAT.value, {}, time.time())
 
@@ -90,7 +95,7 @@ class SSEManager:
 def _format_sse(event: str, data: Any, timestamp: float) -> bytes:
     """Format an SSE event as bytes."""
     payload = json.dumps({"timestamp": timestamp, **data} if isinstance(data, dict) else data)
-    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
+    return f"event: {event}\ndata: {payload}\n\n".encode()
 
 
 # Process-wide singleton

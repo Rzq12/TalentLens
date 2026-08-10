@@ -12,14 +12,14 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from app.agents.agent import AgentResult
     from app.agents.base import LLMRequest, LLMResponse
     from app.models import RunTask
 
 
 class WorkflowRunner(Protocol):
     """Durable execution port. Default: InProcessWorkflowRunner.
-    Swap-in: TemporalWorkflowRunner, unchanged call sites in services/."""
+    Swap-in: TemporalWorkflowRunner, unchanged call sites in services/.
+    """
 
     async def enqueue(self, run_id: UUID, stage: str, tasks: list[dict]) -> None: ...
 

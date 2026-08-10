@@ -117,8 +117,6 @@ def _decode_supabase_token(token: str, cfg: Settings) -> Principal:
     the JWKS endpoint and cached. Claims structure: ``sub`` = user UUID,
     ``app_metadata.tenant_id`` custom claim for tenancy.
     """
-    import httpx
-
     from jwt import PyJWKClient
 
     try:
