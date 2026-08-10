@@ -365,11 +365,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # === Agent startup: register all agents on boot ===
     from app.agents.ats_scoring import AtsScoringAgent
     from app.agents.cv_parser import CvParserAgent
+    from app.agents.education_analyzer import EducationAnalyzerAgent
+    from app.agents.experience_analyzer import ExperienceAnalyzerAgent
     from app.agents.semantic_matching import SemanticMatchingAgent
+    from app.agents.skill_extraction import SkillExtractionAgent
     from app.routers.screening import get_registry
 
     get_registry().register(CvParserAgent)
     get_registry().register(AtsScoringAgent)
+    get_registry().register(SkillExtractionAgent)
+    get_registry().register(ExperienceAnalyzerAgent)
+    get_registry().register(EducationAnalyzerAgent)
     get_registry().register(SemanticMatchingAgent)
 
     return app
