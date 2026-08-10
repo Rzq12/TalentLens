@@ -360,11 +360,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(screening.router, prefix=cfg.api_v1_prefix)
 
     # === Agent startup: register all agents on boot ===
+    from app.agents.ats_scoring import AtsScoringAgent
+    from app.agents.cv_parser import CvParserAgent
     from app.agents.semantic_matching import SemanticMatchingAgent
     from app.routers.screening import get_registry
 
-    # Semantic Matching (#7) is the only LLM agent wired for MVP.
-    # Other agents register here as they are implemented.
+    get_registry().register(CvParserAgent)
+    get_registry().register(AtsScoringAgent)
     get_registry().register(SemanticMatchingAgent)
 
     return app
