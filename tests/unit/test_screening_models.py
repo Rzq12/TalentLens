@@ -27,8 +27,8 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Integer, Numeric, UniqueConstraint
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy import ARRAY, Boolean, Integer, Numeric, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 
 import app.models as models
 
