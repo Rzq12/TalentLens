@@ -24,7 +24,7 @@ from app.db import set_tenant_context as _set_tenant_context
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
 from app.metrics import app_info, http_requests_total, http_request_duration_seconds
-from app.routers import auth, jobs, resumes, rubric, search
+from app.routers import auth, jobs, resumes, rubric, screening, search
 from app.security import decode_access_token as _decode_access_token
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
@@ -357,4 +357,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(jobs.router, prefix=cfg.api_v1_prefix)
     app.include_router(rubric.router, prefix=cfg.api_v1_prefix)
     app.include_router(search.router, prefix=cfg.api_v1_prefix)
+    app.include_router(screening.router, prefix=cfg.api_v1_prefix)
+
+    # === Agent startup: register all agents on boot ===
+    from app.agents.semantic_matching import SemanticMatchingAgent
+    from app.routers.screening import get_registry
+
+    # Semantic Matching (#7) is the only LLM agent wired for MVP.
+    # Other agents register here as they are implemented.
+    get_registry().register(SemanticMatchingAgent)
+
     return app

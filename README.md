@@ -157,6 +157,10 @@ except `/health`.
 | `GET` | `/api/v1/rubrics/{rubric_version_id}` | Read one rubric version |
 | `POST` | `/api/v1/rubrics/{rubric_version_id}/requirements` | Replace a draft's criteria |
 | `POST` | `/api/v1/rubrics/{rubric_version_id}/approve` | Approve and freeze a rubric |
+| `POST` | `/api/v1/screening/jobs/{job_id}/runs` | Start a screening run (202 + SSE) |
+| `GET` | `/api/v1/screening/runs/{run_id}` | Poll run status |
+| `GET` | `/api/v1/screening/runs/{run_id}/events` | SSE stream for run progress |
+| `GET` | `/api/v1/screening/runs/{run_id}/results` | Get ranked results of a completed run |
 | `POST` | `/api/v1/rubrics/{rubric_version_id}/versions` | Mint the next version |
 | `POST` | `/api/v1/rubrics/{rubric_version_id}/score:preview` | Score against hypothetical verdicts |
 | `GET` | `/api/v1/rubrics/templates` | List the starter templates |
