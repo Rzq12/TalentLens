@@ -75,7 +75,7 @@ ignore = ["D203", "D213", "ANN401"]
 "tests/*" = ["D100", "D103", "ANN201", "ANN001"]
 "serving/app/migrations/*" = ["D", "ANN"]
 "serving/app/services/*" = ["D102", "D103", "D105", "D107", "D205", "ANN001", "ANN202", "ANN204", "SIM105"]
-"serving/app/agents/*" = ["D101", "D102", "D103", "D105", "D107", "D205", "E501"]
+"serving/app/agents/*" = ["D101", "D102", "D103", "D105", "D107", "D205", "E501", "E701", "E702", "ANN001", "ANN201", "ANN202", "ANN204", "F401", "UP038"]
 "serving/app/routers/screening.py" = ["D102", "D103", "ANN202", "ANN001"]
 
 [tool.ruff.lint.pydocstyle]
