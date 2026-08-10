@@ -32,7 +32,7 @@ class PageLayout(BaseModel):
     page: int = 0
     width: float = 0.0
     height: float = 0.0
-    spans: list[dict] = []
+    spans: list[dict[str, object]] = []
 
 
 class CvParseInput(BaseModel):
@@ -81,7 +81,7 @@ class CvParserAgent(DeterministicAgent[CvParseInput, CvParseOutput]):
         guessed/partial profile.
         """
         try:
-            from app.services.parser import get_parser_version  # noqa: F401 — used below
+            from app.services.parser import PARSER_VERSION  # noqa: F401 — used below
         except ImportError as exc:
             return AgentResult(
                 status="failed",
@@ -108,7 +108,7 @@ class CvParserAgent(DeterministicAgent[CvParseInput, CvParseOutput]):
             pages=[],
             page_count=page_count,
             parse_status="low_yield" if needs_ocr else "ok",
-            parser_version=get_parser_version(),
+            parser_version=PARSER_VERSION,
             needs_ocr=needs_ocr,
         )
 
