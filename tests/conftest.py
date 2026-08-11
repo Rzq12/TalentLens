@@ -19,6 +19,13 @@ def _test_environment() -> Iterator[None]:
     """Populate the environment `Settings` requires before any import of app.config.
 
     Values are synthetic and local-only. Nothing here is a real credential.
+
+    The provider keys are pinned to empty deliberately. ``Settings`` reads
+    ``.env`` from the working directory, so without them a developer's real
+    Gemini and Groq keys would be loaded into every test process that calls
+    ``create_app()`` — and the suite would behave differently on a machine that
+    has a ``.env`` than in CI, which has none. Empty means every provider is
+    absent, which is the state these tests assert against.
     """
     defaults = {
         "DATABASE_URL": "postgresql+asyncpg://postgres:postgres@localhost:5433/talentlens_test",
@@ -27,6 +34,9 @@ def _test_environment() -> Iterator[None]:
         "JWT_AUDIENCE": "authenticated",
         "STORAGE_BACKEND": "memory",
         "ENVIRONMENT": "test",
+        "GOOGLE_API_KEY": "",
+        "GROQ_API_KEY": "",
+        "HF_API_KEY": "",
     }
     previous = {k: os.environ.get(k) for k in defaults}
     os.environ.update(defaults)
