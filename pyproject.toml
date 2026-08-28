@@ -28,6 +28,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ocr = [
+    "pytesseract>=0.3.13,<0.4",
+]
 dev = [
     "pytest>=9.1,<10",
     "pytest-asyncio>=1.0,<2",

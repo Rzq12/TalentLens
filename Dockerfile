@@ -15,7 +15,7 @@ WORKDIR /app
 COPY pyproject.toml requirements.lock ./
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -e ".[dev]"
+    && pip install --no-cache-dir -e ".[dev,ocr]"
 
 COPY serving/ serving/
 COPY tests/ tests/

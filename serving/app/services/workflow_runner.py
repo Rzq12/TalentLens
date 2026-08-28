@@ -12,12 +12,21 @@ ARCHITECTURE-AGENTS.md §2.5 — resumption after container restart is just
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from app.models import AgentResultCache, RunCheckpoint, RunTask
+from app.models import AgentResultCache, RunCheckpoint, RunTask, ScreeningRun
+
+
+def _advisory_lock_key(run_id: uuid.UUID) -> int:
+    """Return a process-stable signed 64-bit PostgreSQL advisory lock key."""
+    value = int.from_bytes(run_id.bytes[:8], byteorder="big", signed=False)
+    return value - (1 << 64) if value >= (1 << 63) else value
 
 
 class InProcessWorkflowRunner:
@@ -28,7 +37,7 @@ class InProcessWorkflowRunner:
     runs are found by heartbeat age, and pending tasks are re-drained.
     """
 
-    def __init__(self, session_factory):
+    def __init__(self, session_factory: Callable[[], AbstractAsyncContextManager[Any]]) -> None:
         self._session_factory = session_factory
 
     async def enqueue(
@@ -38,7 +47,7 @@ class InProcessWorkflowRunner:
         stage: str,
         agent_name: str,
         tenant_id: uuid.UUID,
-        tasks: list[dict],
+        tasks: list[dict[str, Any]],
     ) -> list[int]:
         """Insert task rows and return their ids.
 
@@ -81,14 +90,10 @@ class InProcessWorkflowRunner:
         during brief overlap windows (rolling HF Spaces deploy).
         """
         async with self._session_factory() as session:
-            # Advisory lock to serialize claim for this run
-            await session.execute(
-                select("pg_advisory_xact_lock")
-                .select_from(0).where(False)  # no-op
-            )
+            # PostgreSQL lock values must be stable across independently-started workers.
             try:
                 await session.execute(
-                    f"SELECT pg_advisory_xact_lock({hash(str(run_id)) % 2147483647})"
+                    select(func.pg_advisory_xact_lock(_advisory_lock_key(run_id)))
                 )
             except Exception:
                 pass  # advisory lock may not be available in SQLite/test
@@ -120,7 +125,7 @@ class InProcessWorkflowRunner:
             await session.commit()
             return tasks
 
-    async def complete(self, task_id: int, result: dict) -> None:
+    async def complete(self, task_id: int, result: dict[str, Any]) -> None:
         """Mark a task as done with result."""
         async with self._session_factory() as session:
             stmt = (
@@ -167,20 +172,19 @@ class InProcessWorkflowRunner:
         container restart or HF Spaces sleep/wake cycle.
         """
         async with self._session_factory() as session:
-            cutoff = datetime.now(UTC)
-            # Simple approach: find checkpoints with old heartbeat
-            # In production, also filter on screening_runs.status='running'
+            cutoff = datetime.now(UTC) - timedelta(seconds=older_than_seconds)
             stmt = (
                 select(RunCheckpoint.run_id)
+                .join(ScreeningRun, ScreeningRun.id == RunCheckpoint.run_id)
                 .where(
-                    RunCheckpoint.heartbeat_at
-                    < cutoff
+                    RunCheckpoint.heartbeat_at < cutoff,
+                    ScreeningRun.status.in_(("queued", "running")),
                 )
             )
             result = await session.execute(stmt)
             return [row[0] for row in result.all()]
 
-    async def cache_get(self, cache_key: str) -> dict | None:
+    async def cache_get(self, cache_key: str) -> dict[str, Any] | None:
         """Look up a cached agent result by key."""
         async with self._session_factory() as session:
             row = await session.get(AgentResultCache, cache_key)
@@ -192,15 +196,14 @@ class InProcessWorkflowRunner:
         tenant_id: uuid.UUID,
         agent_name: str,
         agent_version: str,
-        output: dict,
+        output: dict[str, Any],
         ttl_seconds: int | None = None,
     ) -> None:
         """Store an agent result in the durable cache."""
         async with self._session_factory() as session:
-            expires = None
+            expires: datetime | None = None
             if ttl_seconds:
-                expires = datetime.now(UTC).timestamp() + ttl_seconds
-                expires = datetime.fromtimestamp(expires, tz=UTC)
+                expires = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
             stmt = insert(AgentResultCache).values(
                 cache_key=cache_key,
                 tenant_id=tenant_id,

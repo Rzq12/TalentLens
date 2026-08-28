@@ -150,6 +150,12 @@ class Orchestrator:
                         "agent": agent.name,
                         "status": result.status,
                         "cache_hit": result.cache_hit,
+                        "output": (
+                            result.output.model_dump(mode="json")
+                            if result.output is not None
+                            and hasattr(result.output, "model_dump")
+                            else result.output
+                        ),
                     }
                 )
                 if result.status == "failed" and stage in CORE_STAGES:
@@ -222,7 +228,15 @@ class Orchestrator:
             # Persist results — complete or fail each task
             for detail in outcome.details:
                 if detail["status"] == "ok":
-                    await complete_fn(detail["task_id"], {"status": "ok"})
+                    await complete_fn(
+                        detail["task_id"],
+                        {
+                            "status": "ok",
+                            "agent": detail["agent"],
+                            "cache_hit": detail["cache_hit"],
+                            "output": detail["output"],
+                        },
+                    )
                 else:
                     await fail_fn(detail["task_id"], "stage execution failed")
 

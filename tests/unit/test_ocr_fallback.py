@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from app.agents.agent import AgentResult
-from app.agents.ocr_agent import OcrOutput, PageOcrResult
+from app.agents.ocr_agent import OcrOutput, PageOcrResult, _parse_confidence
 from app.services.ocr_fallback import apply_ocr_fallback
 from app.services.parser import parse_document
 
@@ -24,6 +24,13 @@ class StubOcr:
         """Return the configured result."""
         self.calls += 1
         return self.result
+
+
+def test_parse_confidence_accepts_tesseract_string_values() -> None:
+    """Tesseract commonly returns confidence as strings, not numeric values."""
+    assert _parse_confidence("87.5") == 87.5
+    assert _parse_confidence("-1") == 0.0
+    assert _parse_confidence("unavailable") == 0.0
 
 
 @pytest.mark.anyio
