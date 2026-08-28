@@ -64,6 +64,7 @@ async def record_decision(
         resource_type="candidate_score",
         resource_id=str(score.id),
         details={"decision": payload.decision, "reason": payload.reason},
+        ip_address=request.client.host if request.client else None,
         request_id=getattr(request.state, "request_id", None),
     )
     await session.commit()
@@ -108,6 +109,7 @@ async def override_verdict(
         resource_type="requirement_verdict",
         resource_id=str(verdict.id),
         details={"verdict": payload.verdict, "reason": payload.reason},
+        ip_address=request.client.host if request.client else None,
         request_id=getattr(request.state, "request_id", None),
     )
     await session.commit()

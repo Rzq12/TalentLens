@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Uniform error envelope for all API responses
 - `ChunkRepositoryProtocol` for type-safe repository abstraction
 - `test_docs_sync.py` to keep README and `.env.example` in sync with code
+- PostgreSQL governance integration tests for external JWT principals and tenant isolation
+- Durable retry policy with classified errors, bounded exponential backoff, quota rescheduling, and maximum attempts
+- Continuous Compose `worker` service with durable worker health metrics
+- Versioned deterministic evaluation harness, baseline artifacts, and a 3% regression gate in CI
 
 ### Changed
 - Rate limiter simplified from JWT-subject-based to IP-only keyed on X-Forwarded-For

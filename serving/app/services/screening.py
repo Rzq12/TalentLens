@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Protocol, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +31,8 @@ from app.models import (
     RubricVersion,
     ScreeningRun,
 )
+from app.services.llm_cost import response_cost_usd
+from app.services.retrieval_funnel import FunnelResult
 from app.services.scoring import Verdict, aggregate_score, verify_evidence_span
 
 
@@ -40,6 +42,14 @@ class Judge(Protocol):
     async def run(
         self, payload: JudgeInput, ctx: AgentContext
     ) -> AgentResult[JudgeOutput]: ...
+
+
+class EvidenceRetriever(Protocol):
+    """Candidate-bounded retrieval capability used before judging."""
+
+    async def __call__(
+        self, version: ResumeVersion, query: str
+    ) -> tuple[list[ResumeChunk], FunnelResult]: ...
 
 
 def _batches(items: Sequence[Requirement], size: int = 6) -> list[Sequence[Requirement]]:
@@ -121,6 +131,7 @@ async def execute_screening_run(
     rubric: RubricVersion,
     job_title: str,
     judge: Judge,
+    evidence_retriever: EvidenceRetriever | None = None,
 ) -> list[CandidateScore]:
     """Judge all eligible profiles, persist deterministic scores, and assign ranks.
 
@@ -158,10 +169,14 @@ async def execute_screening_run(
         profile for profile in profiles if profile[0].id not in completed_candidates
     ]
     run.candidate_count = len(profiles)
-    run.funnel_stage_counts = {
+    funnel_stage_counts: dict[str, int] = {
         "eligible_profiles": len(profiles),
         "already_scored": len(completed_candidates),
         "judged": len(profiles_to_score),
+        "retrieval_candidates": 0,
+        "recall_chunks_total": 0,
+        "reranked_chunks_total": 0,
+        "judge_chunks_total": 0,
     }
     scores: list[CandidateScore] = list(
         (
@@ -173,6 +188,26 @@ async def execute_screening_run(
 
     for candidate, profile, version in profiles_to_score:
         evidence, chunk_ids = await _evidence_for_version(session, version)
+        if evidence_retriever is not None:
+            retrieved_chunks, funnel = await evidence_retriever(version, job_title)
+            if retrieved_chunks:
+                evidence = [
+                    EvidenceChunk(
+                        chunk_id=str(chunk.id),
+                        content=chunk.content,
+                        section=chunk.section,
+                        page_from=chunk.page_from,
+                        page_to=chunk.page_to,
+                        start_char=chunk.start_char,
+                        end_char=chunk.end_char,
+                    )
+                    for chunk in retrieved_chunks
+                ]
+                chunk_ids = [chunk.id for chunk in retrieved_chunks]
+            funnel_stage_counts["retrieval_candidates"] += 1
+            funnel_stage_counts["recall_chunks_total"] += funnel.after_recall
+            funnel_stage_counts["reranked_chunks_total"] += funnel.after_rerank
+            funnel_stage_counts["judge_chunks_total"] += funnel.final_pool
         judged: list[tuple[Requirement, VerdictOutput, AgentResult[JudgeOutput]]] = []
         for batch in _batches(requirements):
             payload = JudgeInput(
@@ -223,6 +258,11 @@ async def execute_screening_run(
             run.total_input_tokens = (run.total_input_tokens or 0) + result.input_tokens
             run.total_output_tokens = (
                 (run.total_output_tokens or 0) + result.output_tokens
+            )
+            run.cost_usd = (run.cost_usd or Decimal("0")) + response_cost_usd(
+                provider=result.provider,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
             )
 
         aggregation = aggregate_score(
@@ -287,7 +327,8 @@ async def execute_screening_run(
         start=1,
     ):
         score.rank = rank
-    run.funnel_stage_counts["scored_total"] = len(scores)
+    funnel_stage_counts["scored_total"] = len(scores)
+    run.funnel_stage_counts = cast(dict[str, object], funnel_stage_counts)
     run.status = "completed"
     run.completed_at = datetime.now(UTC)
     return scores

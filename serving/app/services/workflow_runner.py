@@ -22,6 +22,14 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.models import AgentResultCache, RunCheckpoint, RunTask, ScreeningRun
 
+_RETRYABLE_ERROR_CODES = frozenset({"network", "model_unavailable", "unknown"})
+_QUOTA_ERROR_CODES = frozenset({"rate_limit", "quota", "budget_exceeded"})
+
+
+def _retry_delay_seconds(attempt: int) -> int:
+    """Return bounded exponential retry delay for a failed claim."""
+    return min(300, 2 ** max(attempt - 1, 0))
+
 
 def _advisory_lock_key(run_id: uuid.UUID) -> int:
     """Return a process-stable signed 64-bit PostgreSQL advisory lock key."""
@@ -182,15 +190,42 @@ class InProcessWorkflowRunner:
             await session.execute(stmt)
             await session.commit()
 
-    async def fail(self, task_id: int, error: str) -> None:
-        """Mark a task as failed with error."""
+    async def fail(
+        self,
+        task_id: int,
+        error: str,
+        *,
+        error_code: str = "unknown",
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        """Record a classified task failure and transition it durably."""
         async with self._session_factory() as session:
-            stmt = (
-                update(RunTask)
-                .where(RunTask.id == task_id)
-                .values(status="failed", error=error)
-            )
-            await session.execute(stmt)
+            task = await session.get(RunTask, task_id, with_for_update=True)
+            if task is None:
+                return
+
+            values: dict[str, Any] = {"error": error, "error_code": error_code}
+            if error_code in _QUOTA_ERROR_CODES:
+                delay = max(retry_after_seconds or 60, 1)
+                values.update(
+                    status="pending",
+                    claimed_by=None,
+                    claimed_at=None,
+                    not_before=datetime.now(UTC) + timedelta(seconds=delay),
+                    attempt=max(task.attempt - 1, 0),
+                )
+            elif error_code in _RETRYABLE_ERROR_CODES and task.attempt < task.max_attempts:
+                values.update(
+                    status="pending",
+                    claimed_by=None,
+                    claimed_at=None,
+                    not_before=datetime.now(UTC)
+                    + timedelta(seconds=_retry_delay_seconds(task.attempt)),
+                )
+            else:
+                values.update(status="failed", claimed_by=None, claimed_at=None)
+
+            await session.execute(update(RunTask).where(RunTask.id == task_id).values(**values))
             await session.commit()
 
     async def heartbeat(self, run_id: uuid.UUID, stage: str) -> None:
@@ -226,9 +261,9 @@ class InProcessWorkflowRunner:
                     RunTask.status == "pending",
                     (RunTask.not_before.is_(None)) | (RunTask.not_before <= now),
                 )
-                .order_by(RunTask.id)
+                .group_by(RunTask.run_id, RunTask.tenant_id)
+                .order_by(func.min(RunTask.id))
                 .limit(limit)
-                .distinct()
             )
             return [(row[0], row[1]) for row in result.all()]
 

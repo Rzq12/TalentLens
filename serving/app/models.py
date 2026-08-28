@@ -677,9 +677,11 @@ class RunTask(TimestampMixin, Base):
     )
 
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     payload: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     result: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class AgentResultCache(TimestampMixin, Base):
@@ -1103,7 +1105,7 @@ class Decision(TimestampMixin, Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     agreed_with_ai: Mapped[bool] = mapped_column(Boolean, nullable=False)
     decided_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=func.now
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 

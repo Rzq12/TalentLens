@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from app.exceptions import LLMProviderError
 from app.models import Job, RubricVersion, ScreeningRun
 from app.routers import screening
 from app.services.sse import EventType
@@ -152,3 +153,33 @@ async def test_execute_run_rolls_back_hides_error_and_emits_failed_event(
     ]
     assert events[-1][2]["message"] == "Screening run failed. Please retry later."
     assert "provider key leaked" not in str(events[-1][2])
+
+
+@pytest.mark.asyncio
+async def test_execute_run_preserves_a_provider_failure_for_durable_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    run_dependencies: tuple[ScreeningRun, RubricVersion, Job],
+) -> None:
+    run, rubric, job = run_dependencies
+    session = _Session(run, rubric, job)
+
+    monkeypatch.setattr(screening, "get_sessionmaker", lambda: lambda: _SessionContext(session))
+    monkeypatch.setattr(screening, "set_tenant_context", lambda tenant_id: None)
+    monkeypatch.setattr(screening._registry, "resolve", lambda name: object())
+
+    async def raise_provider_error(**kwargs: Any) -> list[object]:
+        raise LLMProviderError("rate limited", kind="rate_limit", provider="gemini")
+
+    async def ignore_event(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(screening, "execute_screening_run", raise_provider_error)
+    monkeypatch.setattr(screening._sse, "publish", ignore_event)
+
+    outcome = await screening._execute_run(run.id, run.tenant_id)
+
+    assert outcome.success is False
+    assert outcome.error_code == "rate_limit"
+    assert run.status == "queued"
+    assert session.rollbacks == 1
+    assert session.commits == 1

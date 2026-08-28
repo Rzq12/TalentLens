@@ -24,16 +24,16 @@ sitting on an unreliable parser produces confident nonsense. What exists today:
 | JWT + Supabase JWKS authentication with tenant isolation              | Recruiter Chat (RAG, #14)                         |
 | Resume upload (PDF, DOCX) validated on content                        | Resume Improvement (candidate-facing, #10)        |
 | Deterministic parsing with exact character offsets                    | Live-provider evaluation and labelled quality set |
-| Content-hash deduplication with OCR fallback for scanned PDFs         | Worker retry/backoff policy and scheduling        |
+| Content-hash deduplication with OCR fallback for scanned PDFs         | Live-provider evaluation and labelled quality set |
 | Job description upload (pasted text or document)                      | Retrieval funnel measurement and cost controls    |
 | Hybrid dense + lexical search with reranking                          | Fraud and bias sidecar wiring                     |
-| Rubric versioning, approval, weight normalization                     | Human decision and override endpoints             |
+| Rubric versioning, approval, weight normalization                     | Recruiter Chat (RAG, #14)                         |
 | JD Analyst rubric drafting                                            |                                                   |
 | Candidate scoring runs, ranks, verdicts, and verified evidence        |                                                   |
 | Skill-gap, interview, and recommendation insight persistence          |                                                   |
 | Detailed result endpoint for ranked assessments                       |                                                   |
-| Durable admission, Postgres task queue, and stale-claim recovery      | Worker retry/backoff policy and scheduler wiring  |
-| Recruiter decisions, verdict overrides, and tenant audit verification | PostgreSQL integration coverage for governance    |
+| Durable admission, Postgres task queue, retry/backoff, and worker service | Evaluation golden-set labelling (200+ recruiter cases) |
+| Recruiter decisions, verdict overrides, audit verification, and PostgreSQL coverage | Compliance delivery gates and DSAR workflow |
 | Tenant-local tamper-evident audit chain                               |                                                   |
 | RLS on all tenant-scoped tables                                       |                                                   |
 | ONNX e5-small embedding (CPU, no GPU)                                 |                                                   |
@@ -207,17 +207,24 @@ filename over executable bytes is rejected `422`.
 
 Screening admission persists a `ScreeningRun` and durable task in the same
 database transaction. The in-process runner and standalone worker can recover
-stale task claims and resume a run after interruption. Scoring reuses persisted
-candidate scores, evaluates only unfinished candidates, and reranks the complete
-set. Retry backoff, maximum-attempt policy, and production scheduler deployment
-are not implemented yet.
+stale task claims and resume a run after interruption. The Compose `worker`
+service continuously drains ready runs. Transient failures use bounded exponential
+backoff and stop at `max_attempts`; rate-limit or quota reschedules preserve the
+attempt count and set `not_before`. Scoring reuses persisted candidate scores,
+evaluates only unfinished candidates, and reranks the complete set.
 
 Recruiters can record a decision on a score and override a displayed requirement
 verdict only with a reason. Overrides retain the original automated verdict and
 write tenant-local audit events. The decision actor is the authenticated
 principal UUID and is intentionally not required to have a local `users` row;
-apply Alembic revision `20260810_0100` before using these endpoints. PostgreSQL
-integration coverage for this migration and the governance API remains pending.
+apply Alembic revision `20260811_0115` before using the complete governance and
+worker policy schema. PostgreSQL integration tests cover both governance access
+controls and durable worker transitions.
+
+The deterministic evaluation gate runs `eval/golden_set.v1.json` against
+`eval/baseline.v1.json` and fails CI if a tracked metric drops by more than 3%.
+The supplied fixture is a harness seed only; it is not a recruiter-labelled
+production golden set.
 
 External-provider smoke tests are opt-in and never reuse normal provider
 credentials. Set `TALENTLENS_RUN_LIVE_PROVIDER_TESTS=1` and configure one local

@@ -15,6 +15,7 @@ from app.agents.base import FailoverChain, LLMProvider
 from app.agents.hf_provider import HFProvider
 from app.agents.providers import GeminiProvider, GroqProvider
 from app.config import Settings, get_settings
+from app.services.rate_limiter import RateLimitScheduler
 
 
 def build_failover_chain(settings: Settings | None = None) -> FailoverChain:
@@ -33,7 +34,7 @@ def build_failover_chain(settings: Settings | None = None) -> FailoverChain:
                 timeout=max(cfg.llm_timeout_seconds, 90.0),
             )
         )
-    return FailoverChain(providers=providers)
+    return FailoverChain(providers=providers, scheduler=RateLimitScheduler())
 
 
 def build_agent_factories(

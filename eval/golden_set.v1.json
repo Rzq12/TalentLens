@@ -1,0 +1,28 @@
+{
+  "version": "v1",
+  "description": "Seed fixture for evaluation-harness validation. Replace with recruiter-labelled cases before enforcing production quality gates.",
+  "cases": [
+    {
+      "id": "backend-id-senior-001",
+      "expected_match": true,
+      "observed_match": true,
+      "expected_ranking": ["candidate-a", "candidate-b", "candidate-c"],
+      "observed_ranking": ["candidate-a", "candidate-b", "candidate-c"],
+      "relevant_candidate_ids": ["candidate-a", "candidate-b"],
+      "retrieved_candidate_ids": ["candidate-a", "candidate-b", "candidate-c"],
+      "evidence_document": "Membangun layanan Python dan Kubernetes selama lima tahun.",
+      "evidence_quotes": ["layanan Python", "Kubernetes selama lima tahun"]
+    },
+    {
+      "id": "backend-id-junior-002",
+      "expected_match": false,
+      "observed_match": false,
+      "expected_ranking": ["candidate-d", "candidate-e", "candidate-f"],
+      "observed_ranking": ["candidate-d", "candidate-f", "candidate-e"],
+      "relevant_candidate_ids": ["candidate-d"],
+      "retrieved_candidate_ids": ["candidate-d", "candidate-f", "candidate-e"],
+      "evidence_document": "Pengalaman magang Java dan SQL selama enam bulan.",
+      "evidence_quotes": ["Java dan SQL"]
+    }
+  ]
+}

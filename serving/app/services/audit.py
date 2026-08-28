@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from datetime import UTC, datetime
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
@@ -28,11 +29,17 @@ def _event_hash(
     resource_type: str,
     resource_id: str,
     details: dict[str, object] | None,
+    ip_address: str | None,
+    request_id: str | None,
+    occurred_at: datetime,
 ) -> str:
     payload = {
         "action": action,
         "details": details or {},
+        "ip_address": ip_address or "",
+        "occurred_at": occurred_at.isoformat(),
         "previous_hash": previous_hash or "",
+        "request_id": request_id or "",
         "resource_id": resource_id,
         "resource_type": resource_type,
         "tenant_id": str(tenant_id),
@@ -51,6 +58,7 @@ async def record_audit_event(
     resource_type: str,
     resource_id: str,
     details: dict[str, object] | None = None,
+    ip_address: str | None = None,
     request_id: str | None = None,
 ) -> AuditEvent:
     """Append an audit event to a tenant-local hash chain."""
@@ -63,6 +71,7 @@ async def record_audit_event(
         .limit(1)
     )
     previous_hash = previous.chain_hash if previous else None
+    occurred_at = datetime.now(UTC)
     event = AuditEvent(
         tenant_id=tenant_id,
         user_id=user_id,
@@ -70,7 +79,9 @@ async def record_audit_event(
         resource_type=resource_type,
         resource_id=resource_id,
         details=details,
+        ip_address=ip_address,
         request_id=request_id,
+        occurred_at=occurred_at,
         prev_hash=previous_hash,
         chain_hash=_event_hash(
             previous_hash=previous_hash,
@@ -80,6 +91,9 @@ async def record_audit_event(
             resource_type=resource_type,
             resource_id=resource_id,
             details=details,
+            ip_address=ip_address,
+            request_id=request_id,
+            occurred_at=occurred_at,
         ),
     )
     session.add(event)
@@ -99,6 +113,9 @@ def verify_audit_chain(events: Sequence[AuditEvent]) -> int | None:
             resource_type=event.resource_type,
             resource_id=event.resource_id,
             details=event.details,
+            ip_address=event.ip_address,
+            request_id=event.request_id,
+            occurred_at=event.occurred_at,
         )
         if event.prev_hash != previous_hash or event.chain_hash != expected:
             return event.id

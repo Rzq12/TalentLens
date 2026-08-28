@@ -94,6 +94,7 @@ class ChunkRepository:
         top_k: int = 20,
         *,
         document_id: uuid.UUID | None = None,
+        resume_version_id: uuid.UUID | None = None,
     ) -> list[ChunkWithScore]:
         """Dense vector search using pgvector cosine distance.
 
@@ -102,10 +103,14 @@ class ChunkRepository:
             embedding: Query embedding vector.
             top_k: Maximum results.
             document_id: Optional filter to scope results to one document.
+            resume_version_id: Optional filter to scope results to one resume version.
 
         Returns:
             Chunks ordered by descending cosine similarity.
         """
+        if document_id is not None and resume_version_id is not None:
+            raise ValueError("Specify document_id or resume_version_id, not both.")
+
         # Use raw SQL for pgvector operator support
         vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
 
@@ -128,6 +133,22 @@ class ChunkRepository:
                   AND embedding IS NOT NULL
                   AND is_parent = false
                   AND document_id = :document_id
+                ORDER BY embedding <=> :embedding::vector
+                LIMIT :top_k
+            """)
+        elif resume_version_id is not None:
+            params["resume_version_id"] = str(resume_version_id)
+            query = text("""
+                SELECT id, tenant_id, resume_version_id, document_id,
+                       chunk_index, parent_chunk_id, section, content,
+                       page_from, page_to, start_char, end_char,
+                       token_count, embedding_model, embedding_version,
+                       1 - (embedding <=> :embedding::vector) AS score
+                FROM resume_chunks
+                WHERE tenant_id = :tenant_id
+                  AND embedding IS NOT NULL
+                  AND is_parent = false
+                  AND resume_version_id = :resume_version_id
                 ORDER BY embedding <=> :embedding::vector
                 LIMIT :top_k
             """)
@@ -182,6 +203,7 @@ class ChunkRepository:
         top_k: int = 20,
         *,
         document_id: uuid.UUID | None = None,
+        resume_version_id: uuid.UUID | None = None,
     ) -> list[ChunkWithScore]:
         """Lexical search using PostgreSQL tsvector and ts_rank_cd.
 
@@ -190,10 +212,14 @@ class ChunkRepository:
             query: Raw search query text.
             top_k: Maximum results.
             document_id: Optional filter to scope results to one document.
+            resume_version_id: Optional filter to scope results to one resume version.
 
         Returns:
             Chunks ordered by descending ts_rank_cd score.
         """
+        if document_id is not None and resume_version_id is not None:
+            raise ValueError("Specify document_id or resume_version_id, not both.")
+
         params: dict[str, object] = {
             "tenant_id": str(tenant_id),
             "query": query,
@@ -213,6 +239,22 @@ class ChunkRepository:
                   AND content_tsv IS NOT NULL
                   AND content_tsv @@ plainto_tsquery('english', :query)
                   AND document_id = :document_id
+                ORDER BY score DESC
+                LIMIT :top_k
+            """)
+        elif resume_version_id is not None:
+            params["resume_version_id"] = str(resume_version_id)
+            sql = text("""
+                SELECT id, tenant_id, resume_version_id, document_id,
+                       chunk_index, parent_chunk_id, section, content,
+                       page_from, page_to, start_char, end_char,
+                       token_count, embedding_model, embedding_version,
+                       ts_rank_cd(content_tsv, plainto_tsquery('english', :query)) AS score
+                FROM resume_chunks
+                WHERE tenant_id = :tenant_id
+                  AND content_tsv IS NOT NULL
+                  AND content_tsv @@ plainto_tsquery('english', :query)
+                  AND resume_version_id = :resume_version_id
                 ORDER BY score DESC
                 LIMIT :top_k
             """)

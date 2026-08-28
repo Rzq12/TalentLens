@@ -93,6 +93,9 @@ jobs:
       - name: Run tests with coverage
         run: pytest tests/ -q --cov=serving/app --cov-report=term-missing --cov-report=xml
 
+      - name: Enforce evaluation baseline
+        run: python eval/run.py --maximum-drop 0.03
+
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4

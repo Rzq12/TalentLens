@@ -11,6 +11,7 @@ import pytest
 
 from app.agents.agent import AgentResult
 from app.agents.semantic_matching import JudgeOutput, VerdictOutput
+from app.config import Settings
 from app.models import (
     Candidate,
     CandidateProfile,
@@ -78,6 +79,7 @@ class _Judge:
             agent_version="1.0.0",
             prompt_version="v1",
             model="test-judge",
+            provider="gemini",
             input_tokens=11,
             output_tokens=7,
         )
@@ -199,3 +201,77 @@ def test_resolve_quote_rejects_missing_or_ambiguous_quotes(quote: str) -> None:
     document = "Python developer with Python mentoring experience."
 
     assert _resolve_quote(document, quote) is None
+
+
+@pytest.mark.asyncio
+async def test_screening_run_accumulates_cost_from_configured_rate_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant_id = uuid.uuid4()
+    rubric = RubricVersion(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        job_id=uuid.uuid4(),
+        version=1,
+        status="approved",
+        source="manual",
+        content_hash="b" * 64,
+        must_have_fail_cap=40,
+        aggregation_formula_version="v1",
+    )
+    requirement = Requirement(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        rubric_version_id=rubric.id,
+        ordinal=0,
+        text="Python",
+        category="skill",
+        is_must_have=True,
+        weight=Decimal("1.0000"),
+    )
+    candidate = Candidate(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        name="Ada",
+        consent_granted_at=datetime.now(UTC),
+    )
+    profile = CandidateProfile(id=uuid.uuid4(), tenant_id=tenant_id, candidate_id=candidate.id)
+    version = _version(tenant_id)
+    profile.resume_version_id = version.id
+    run = ScreeningRun(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        job_id=rubric.job_id,
+        rubric_version_id=rubric.id,
+        status="queued",
+        mode="interactive",
+        cost_usd=Decimal("0"),
+    )
+    session = _Session(
+        [
+            _Result([requirement]),
+            _Result([(candidate, profile, version)]),
+            _Result([]),
+            _Result([]),
+            _Result([]),
+        ]
+    )
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql+asyncpg://x/y",
+        jwt_secret="s" * 32,
+        gemini_input_usd_per_million_tokens="2",
+        gemini_output_usd_per_million_tokens="4",
+    )
+    monkeypatch.setattr("app.services.llm_cost.get_settings", lambda: settings)
+    judge = _Judge()
+
+    await execute_screening_run(
+        session=session,
+        run=run,
+        rubric=rubric,
+        job_title="Backend Engineer",
+        judge=judge,
+    )
+
+    assert run.cost_usd == Decimal("0.000050")

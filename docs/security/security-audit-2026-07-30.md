@@ -177,23 +177,32 @@ This section records changes made after the 2026-07-30 audit. It is not a new
 full audit and does not change the original finding counts above.
 
 - Alembic migrations, tenant RLS policies, and pgvector were applied and
-  validated against Neon/PostgreSQL.
+  validated against an isolated local PostgreSQL/pgvector test database. This
+  audit does not claim validation against a shared Neon environment.
 - Resume sanitization, OCR fallback, provider error normalization, and PII-tier
-  gates are now implemented. Live provider calls remain opt-in and must use only
+  gates are implemented. Live provider calls remain opt-in and must use only
   synthetic T0 inputs with dedicated `TALENTLENS_LIVE_*_API_KEY` credentials.
 - The durable queue includes `run_tasks`, checkpoints, result cache, stale-claim
-  recovery, and a standalone one-pass worker. `ready_runs()` still needs direct
-  PostgreSQL validation; retry/backoff/max-attempt scheduling is unfinished.
+  recovery, PostgreSQL-validated `ready_runs()`, retry/backoff/max-attempt policy,
+  and a continuous Compose worker. Rate/quota/budget reschedules do not consume
+  a logical attempt.
 - Audit events are hash-chained and protected by a tenant PostgreSQL advisory
-  transaction lock. Unit tests verify both intact and tampered chains. The hash
-  currently excludes `occurred_at`, `ip_address`, and `request_id`; decide
-  whether these fields need integrity coverage before a regulator-readiness claim.
+  transaction lock. The canonical hash covers `occurred_at`, `ip_address`, and
+  `request_id` as persisted; unit and PostgreSQL integration tests cover intact
+  and tampered chains. This is integrity evidence, not a regulator-readiness claim.
 - Governance endpoints record reasoned human decisions and verdict overrides,
-  retaining the original automated verdict. Migration `20260810_0100` removes
-  the local `users` foreign-key requirement for an authenticated external actor.
-  PostgreSQL migration and endpoint integration coverage remain pending.
-- Provider rate reservations are atomic across TPM/RPM/RPD buckets, but the
-  limiter is not yet integrated with provider dispatch or a durable reschedule.
+  retaining the original automated verdict. Migration `20260810_0100` permits an
+  authenticated external actor without a local `users` row; integration tests
+  validate this and cross-tenant resources return `404`.
+- Provider dispatch centrally applies in-process atomic TPM/RPM/RPD reservations,
+  failover, typed failure propagation, and token/provider-error metrics. The
+  scheduler is not shared across processes, and scheduler retry-after is not yet
+  a structured durable reschedule value.
+- Cost accounting persists `Decimal` input/output token charges per screening run
+  using explicit environment rate cards; unknown providers and zero-default cards
+  incur zero cost. Candidate evidence retrieval is scoped by `resume_version_id`
+  before dense/lexical fusion and reranking, and actual funnel survivor counts are
+  persisted per run.
 
 ---
 

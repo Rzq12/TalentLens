@@ -175,6 +175,10 @@ async def test_partial_retry_scores_only_remaining_candidate_and_reranks_all() -
         "eligible_profiles": 2,
         "already_scored": 1,
         "judged": 1,
+        "retrieval_candidates": 0,
+        "recall_chunks_total": 0,
+        "reranked_chunks_total": 0,
+        "judge_chunks_total": 0,
         "scored_total": 2,
     }
     assert len([item for item in session.added if isinstance(item, CandidateScore)]) == 1

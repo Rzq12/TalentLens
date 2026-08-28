@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, status
@@ -18,7 +19,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from app.db import DbSession, get_sessionmaker, set_tenant_context
-from app.exceptions import ResourceConflictError, ResourceNotFoundError
+from app.exceptions import (
+    BudgetExceededError,
+    LLMProviderError,
+    ResourceConflictError,
+    ResourceNotFoundError,
+)
 from app.models import (
     CandidateScore,
     EvidenceSpanRecord,
@@ -32,7 +38,10 @@ from app.models import (
     SkillGap,
 )
 from app.security import ReadPrincipal, WritePrincipal
+from app.services.embedding import get_embedding_service
 from app.services.orchestration import AgentRegistry, Orchestrator
+from app.services.reranker import get_reranker_service
+from app.services.retrieval_funnel import run_resume_version_retrieval_funnel
 from app.services.screening import execute_screening_run
 from app.services.screening_insights import persist_score_insights
 from app.services.sse import EventType, get_sse_manager
@@ -47,15 +56,21 @@ router = APIRouter(prefix="/screening", tags=["screening"])
 _registry = AgentRegistry()
 _orchestrator = Orchestrator(registry=_registry, max_concurrency=16)
 _sse = get_sse_manager()
+_RESCHEDULABLE_ERROR_CODES = frozenset(
+    {"rate_limit", "quota", "budget_exceeded", "network", "model_unavailable", "unknown"}
+)
+_INTERNAL_ERROR_CODE = "internal"
 
 
 def get_registry() -> AgentRegistry:
+    """Return the application-wide agent registry populated during startup."""
     return _registry
 
 
-def get_orchestrator() -> Orchestrator:
-    return _orchestrator
-
+@dataclass(frozen=True, slots=True)
+class _ExecutionOutcome:
+    success: bool
+    error_code: str | None = None
 
 # --------------------------------------------------------------------------- #
 # API                                                                         #
@@ -383,32 +398,53 @@ async def _drain_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
         return
     task = tasks[0]
     await runner.heartbeat(run_id, "screening")
-    if await _execute_run(run_id, tenant_id):
+    outcome = await _execute_run(run_id, tenant_id)
+    if outcome.success:
         await runner.complete(task.id, {"status": "ok", "run_id": str(run_id)})
     else:
-        await runner.fail(task.id, "screening execution failed")
+        await runner.fail(
+            task.id,
+            "screening execution failed",
+            error_code=outcome.error_code or "unknown",
+        )
 
 
-async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> bool:
+async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> _ExecutionOutcome:
     """Execute one claimed run using a dedicated worker transaction."""
     set_tenant_context(tenant_id)
     async with get_sessionmaker()() as session:
         try:
             run = await session.get(ScreeningRun, run_id)
             if run is None or run.tenant_id != tenant_id:
-                return True
+                return _ExecutionOutcome(success=True)
+
             rubric = await session.get(RubricVersion, run.rubric_version_id)
             job = await session.get(Job, run.job_id)
             if rubric is None or job is None:
                 raise RuntimeError("Screening run dependencies are unavailable.")
             await _sse.publish(run.id, EventType.STAGE_STARTED, {"stage": "judge"})
             judge = _registry.resolve("semantic_matching")
+            embedder = get_embedding_service()
+            reranker = get_reranker_service()
+
+            async def retrieve_candidate_evidence(version: Any, query: str) -> Any:
+                chunks, funnel = await run_resume_version_retrieval_funnel(
+                    session=session,
+                    embedder=embedder,
+                    reranker=reranker,
+                    tenant_id=tenant_id,
+                    resume_version_id=version.id,
+                    query=query,
+                )
+                return [item.chunk for item in chunks], funnel
+
             scores = await execute_screening_run(
                 session=session,
                 run=run,
                 rubric=rubric,
                 job_title=job.title,
                 judge=judge,
+                evidence_retriever=retrieve_candidate_evidence,
             )
             await _sse.publish(run.id, EventType.STAGE_STARTED, {"stage": "insights"})
             for score in scores:
@@ -436,12 +472,13 @@ async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> bool:
                 EventType.RUN_COMPLETE,
                 {"run_id": str(run.id), "candidate_count": len(scores)},
             )
-            return True
-        except Exception:
+            return _ExecutionOutcome(success=True)
+        except Exception as exc:
             await session.rollback()
+            error_code = _screening_error_code(exc)
             run = await session.get(ScreeningRun, run_id)
             if run is not None and run.tenant_id == tenant_id:
-                run.status = "failed"
+                run.status = "queued" if error_code in _RESCHEDULABLE_ERROR_CODES else "failed"
                 await session.commit()
             await _sse.publish(
                 run_id,
@@ -451,4 +488,13 @@ async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> bool:
                     "message": "Screening run failed. Please retry later.",
                 },
             )
-            return False
+            return _ExecutionOutcome(success=False, error_code=error_code)
+
+
+def _screening_error_code(exc: Exception) -> str:
+    """Map safe, typed upstream failures onto durable runner policy codes."""
+    if isinstance(exc, BudgetExceededError):
+        return "budget_exceeded"
+    if isinstance(exc, LLMProviderError):
+        return exc.kind
+    return _INTERNAL_ERROR_CODE
