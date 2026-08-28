@@ -13,17 +13,17 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, BackgroundTasks, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
-from app.db import DbSession, get_sessionmaker
+from app.db import DbSession, get_sessionmaker, set_tenant_context
 from app.exceptions import ResourceConflictError, ResourceNotFoundError
-from app.models import CandidateScore, RubricVersion, ScreeningRun
+from app.models import CandidateScore, Job, RubricVersion, ScreeningRun
 from app.security import ReadPrincipal, WritePrincipal
 from app.services.orchestration import AgentRegistry, Orchestrator
+from app.services.screening import execute_screening_run
 from app.services.sse import EventType, get_sse_manager
-from app.services.workflow_runner import InProcessWorkflowRunner
 
 router = APIRouter(prefix="/screening", tags=["screening"])
 
@@ -66,6 +66,7 @@ async def start_screening_run(
     job_id: uuid.UUID,
     session: DbSession,
     principal: WritePrincipal,
+    background_tasks: BackgroundTasks,
 ) -> dict[str, Any]:
     """Create a screening run for a job. Requires an approved rubric.
 
@@ -74,6 +75,7 @@ async def start_screening_run(
         session: Request-scoped database session.
         principal: Authenticated caller; supplies the tenant scope and is
             recorded as the run's trigger.
+        background_tasks: Schedules post-response screening execution.
 
     Returns:
         The run id, its initial status, and the SSE URL to follow progress on.
@@ -116,15 +118,8 @@ async def start_screening_run(
     session.add(run)
     await session.flush()
 
-    # 3. Enqueue judge tasks (one per candidate-requirement group)
-    runner = InProcessWorkflowRunner(get_sessionmaker())
-    await runner.enqueue(
-        run_id=run.id,
-        stage="judge",
-        agent_name="semantic_matching",
-        tenant_id=principal.tenant_id,
-        tasks=[],  # Populated when funnel runs
-    )
+    # 3. Schedule execution after the admission transaction commits.
+    background_tasks.add_task(_execute_run, run.id, principal.tenant_id)
 
     # 4. Publish run.started event
     await _sse.publish(run.id, EventType.RUN_STARTED, {"run_id": str(run.id)})
@@ -256,3 +251,51 @@ async def get_run_results(
             for s in scores
         ],
     }
+
+
+async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
+    """Execute one admitted run using a dedicated post-response transaction."""
+    set_tenant_context(tenant_id)
+    async with get_sessionmaker()() as session:
+        try:
+            run = await session.get(ScreeningRun, run_id)
+            if run is None or run.tenant_id != tenant_id:
+                return
+            rubric = await session.get(RubricVersion, run.rubric_version_id)
+            job = await session.get(Job, run.job_id)
+            if rubric is None or job is None:
+                raise RuntimeError("Screening run dependencies are unavailable.")
+            await _sse.publish(run.id, EventType.STAGE_STARTED, {"stage": "judge"})
+            judge = _registry.resolve("semantic_matching")
+            scores = await execute_screening_run(
+                session=session,
+                run=run,
+                rubric=rubric,
+                job_title=job.title,
+                judge=judge,
+            )
+            await session.commit()
+            await _sse.publish(
+                run.id,
+                EventType.STAGE_COMPLETE,
+                {"stage": "judge", "candidate_count": len(scores)},
+            )
+            await _sse.publish(
+                run.id,
+                EventType.RUN_COMPLETE,
+                {"run_id": str(run.id), "candidate_count": len(scores)},
+            )
+        except Exception:
+            await session.rollback()
+            run = await session.get(ScreeningRun, run_id)
+            if run is not None and run.tenant_id == tenant_id:
+                run.status = "failed"
+                await session.commit()
+            await _sse.publish(
+                run_id,
+                EventType.RUN_FAILED,
+                {
+                    "run_id": str(run_id),
+                    "message": "Screening run failed. Please retry later.",
+                },
+            )

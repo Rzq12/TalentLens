@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, File, Query, UploadFile, status
+from fastapi import APIRouter, File, Form, Query, UploadFile, status
 
 from app.db import DbSession
 from app.exceptions import ResourceNotFoundError
@@ -40,6 +40,9 @@ async def upload_resume(
     principal: WritePrincipal,
     session: DbSession,
     file: Annotated[UploadFile, File()],
+    candidate_name: Annotated[str, Form(min_length=1, max_length=255)],
+    candidate_email: Annotated[str | None, Form(max_length=255)] = None,
+    consent_granted: Annotated[bool, Form()] = False,
 ) -> ResumeUploadResponse:
     """Ingest one resume.
 
@@ -47,6 +50,9 @@ async def upload_resume(
         principal: Verified caller.
         session: Database session.
         file: The uploaded document.
+        candidate_name: Candidate name supplied by the recruiter.
+        candidate_email: Optional tenant-scoped candidate email.
+        consent_granted: Explicit permission to screen the candidate.
 
     Returns:
         An acknowledgement describing the stored document.
@@ -58,10 +64,15 @@ async def upload_resume(
         principal=principal,
         content=content,
         filename=file.filename or "unnamed",
+        candidate_name=candidate_name,
+        candidate_email=candidate_email,
+        consent_granted=consent_granted,
     )
     document = outcome.document
     return ResumeUploadResponse(
         document_id=document.id,
+        candidate_id=outcome.candidate.id,
+        profile_id=outcome.profile.id,
         filename=document.filename_sanitized,
         media_type=document.media_type,
         size_bytes=document.size_bytes,

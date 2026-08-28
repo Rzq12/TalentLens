@@ -15,6 +15,8 @@ class ResumeUploadResponse(BaseModel):
     """Acknowledgement returned by `POST /api/v1/resumes`."""
 
     document_id: uuid.UUID = Field(description="Identifier of the stored document.")
+    candidate_id: uuid.UUID = Field(description="Candidate linked to this resume.")
+    profile_id: uuid.UUID = Field(description="Candidate profile for this resume version.")
     filename: str = Field(description="Sanitized filename as stored.")
     media_type: str = Field(description="Media type detected from the bytes.")
     size_bytes: int = Field(description="Size of the uploaded file.")

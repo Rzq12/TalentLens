@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -20,7 +21,7 @@ from app.exceptions import (
     UnsupportedMediaTypeError,
 )
 from app.logging import get_logger
-from app.models import Job, ResumeDocument, ResumeVersion
+from app.models import Candidate, CandidateProfile, Job, ResumeDocument, ResumeVersion
 from app.repositories.ingestion import JobRepository, ResumeRepository
 from app.repositories.search import ChunkRepository
 from app.security import Principal
@@ -40,10 +41,14 @@ class IngestionOutcome:
 
     Attributes:
         document: The stored (or previously stored) document row.
+        candidate: Candidate linked to the resume.
+        profile: Candidate profile for the resume version.
         deduplicated: True when identical bytes already existed for this tenant.
     """
 
     document: ResumeDocument
+    candidate: Candidate
+    profile: CandidateProfile
     deduplicated: bool
     injection_risk_score: float = 0.0
     quarantined: bool = False
@@ -87,6 +92,9 @@ async def ingest_resume(
     principal: Principal,
     content: bytes,
     filename: str,
+    candidate_name: str,
+    candidate_email: str | None,
+    consent_granted: bool,
     settings: Settings | None = None,
 ) -> IngestionOutcome:
     """Validate, store, parse, and persist one resume.
@@ -101,6 +109,9 @@ async def ingest_resume(
         principal: The verified caller; supplies tenancy and attribution.
         content: Raw uploaded bytes.
         filename: Client-supplied filename, sanitized before storage.
+        candidate_name: Candidate name supplied by the recruiter.
+        candidate_email: Optional tenant-scoped candidate email for deduplication.
+        consent_granted: Explicit permission to use the CV for screening.
         settings: Optional configuration override.
 
     Returns:
@@ -112,24 +123,38 @@ async def ingest_resume(
         UnsupportedMediaTypeError: If the bytes are not PDF or DOCX.
         DocumentParseError: If the document is structurally unreadable.
     """
+    normalized_name = candidate_name.strip()
+    if not normalized_name:
+        raise ValueError("candidate_name must not be blank")
+
     media_type = validate_upload(content, settings)
     digest = content_sha256(content)
     repo = ResumeRepository(session)
 
     existing = await repo.find_by_hash(principal.tenant_id, digest)
     if existing is not None:
+        prior = await repo.latest_version(principal.tenant_id, existing.id)
+        if prior is None:
+            raise RuntimeError("Deduplicated resume has no parsed version.")
+        profile = await repo.find_profile_by_resume_version(principal.tenant_id, prior.id)
+        if profile is None:
+            raise RuntimeError("Deduplicated resume is not linked to a candidate.")
+        candidate = await session.get(Candidate, profile.candidate_id)
+        if candidate is None:
+            raise RuntimeError("Resume profile references a missing candidate.")
         logger.info(
             "resume_deduplicated",
             document_id=str(existing.id),
             tenant_id=str(principal.tenant_id),
             sha256=digest,
         )
-        prior = await repo.latest_version(principal.tenant_id, existing.id)
         return IngestionOutcome(
             document=existing,
+            candidate=candidate,
+            profile=profile,
             deduplicated=True,
-            injection_risk_score=prior.injection_risk_score if prior else 0.0,
-            quarantined=prior.quarantined if prior else False,
+            injection_risk_score=prior.injection_risk_score,
+            quarantined=prior.quarantined,
         )
 
     # PDF/DOCX parsing is CPU-bound. Running it inline would pin the event
@@ -183,6 +208,30 @@ async def ingest_resume(
 
     await repo.add(document, version)
 
+    normalized_email = candidate_email.strip().lower() if candidate_email else None
+    existing_candidate = (
+        await repo.find_candidate_by_email(principal.tenant_id, normalized_email)
+        if normalized_email
+        else None
+    )
+    candidate = existing_candidate or Candidate(
+        tenant_id=principal.tenant_id,
+        name=normalized_name,
+        email=normalized_email,
+        consent_granted_at=datetime.now(UTC) if consent_granted else None,
+    )
+    profile = CandidateProfile(
+        tenant_id=principal.tenant_id,
+        candidate_id=candidate.id,
+        resume_version_id=version.id,
+        extraction_status="pending",
+    )
+    if existing_candidate is None:
+        await repo.add_candidate_profile(candidate, profile)
+    else:
+        session.add(profile)
+        await session.flush()
+
     # Bridge to Phase 2: chunk, embed, and persist so search can find this resume.
     # Quarantined versions are skipped inside index_resume_version.
     chunk_repo = ChunkRepository(session)
@@ -209,6 +258,8 @@ async def ingest_resume(
     )
     return IngestionOutcome(
         document=document,
+        candidate=candidate,
+        profile=profile,
         deduplicated=False,
         injection_risk_score=sanitized.injection_risk_score,
         quarantined=sanitized.should_quarantine,
