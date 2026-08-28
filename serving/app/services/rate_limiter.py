@@ -28,15 +28,23 @@ class TokenBucket:
     window_seconds: float = 60.0
     _timestamps: list[float] = field(default_factory=list)
 
-    def try_consume(self, tokens: int) -> bool:
-        """Return True if tokens were consumed within budget."""
+    def has_capacity(self, tokens: int) -> bool:
+        """Return whether the bucket can accept tokens without consuming them."""
         now = time.monotonic()
         cutoff = now - self.window_seconds
-        self._timestamps = [t for t in self._timestamps if t > cutoff]
-        if len(self._timestamps) + tokens <= self.capacity:
-            self._timestamps.extend([now] * tokens)
-            return True
-        return False
+        self._timestamps = [timestamp for timestamp in self._timestamps if timestamp > cutoff]
+        return len(self._timestamps) + tokens <= self.capacity
+
+    def consume(self, tokens: int) -> None:
+        """Consume tokens after a scheduler-wide capacity check."""
+        self._timestamps.extend([time.monotonic()] * tokens)
+
+    def try_consume(self, tokens: int) -> bool:
+        """Return True if tokens were consumed within budget."""
+        if not self.has_capacity(tokens):
+            return False
+        self.consume(tokens)
+        return True
 
     def estimated_wait(self, tokens: int) -> float:
         """Seconds until budget likely available."""
@@ -107,11 +115,16 @@ class RateLimitScheduler:
         if k not in self._buckets:
             self.register_key(provider, model, api_key)
         tpm_bucket, rpm_bucket, rpd_bucket = self._buckets[k]
-        return (
-            tpm_bucket.try_consume(estimated_tokens)
-            and rpm_bucket.try_consume(1)
-            and rpd_bucket.try_consume(1)
-        )
+        if not (
+            tpm_bucket.has_capacity(estimated_tokens)
+            and rpm_bucket.has_capacity(1)
+            and rpd_bucket.has_capacity(1)
+        ):
+            return False
+        tpm_bucket.consume(estimated_tokens)
+        rpm_bucket.consume(1)
+        rpd_bucket.consume(1)
+        return True
 
     def estimated_wait(
         self,

@@ -21,7 +21,7 @@ from app.config import Settings, get_settings
 from app.db import set_tenant_context as _set_tenant_context
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
-from app.routers import auth, demo, jobs, resumes, rubric, screening, search
+from app.routers import auth, demo, governance, jobs, resumes, rubric, screening, search
 from app.security import decode_access_token as _decode_access_token
 
 logger = get_logger(__name__)
@@ -361,6 +361,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(rubric.router, prefix=cfg.api_v1_prefix)
     app.include_router(search.router, prefix=cfg.api_v1_prefix)
     app.include_router(screening.router, prefix=cfg.api_v1_prefix)
+    app.include_router(governance.router, prefix=cfg.api_v1_prefix)
     app.include_router(demo.router, prefix=cfg.api_v1_prefix)
 
     # === Agent startup: register all agents on boot ===

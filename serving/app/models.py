@@ -1098,11 +1098,7 @@ class Decision(TimestampMixin, Base):
         ForeignKey("candidate_scores.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    decided_by: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
+    decided_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     decision: Mapped[str] = mapped_column(String(16), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     agreed_with_ai: Mapped[bool] = mapped_column(Boolean, nullable=False)

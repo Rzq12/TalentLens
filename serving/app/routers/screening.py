@@ -36,6 +36,7 @@ from app.services.orchestration import AgentRegistry, Orchestrator
 from app.services.screening import execute_screening_run
 from app.services.screening_insights import persist_score_insights
 from app.services.sse import EventType, get_sse_manager
+from app.services.workflow_runner import InProcessWorkflowRunner
 
 router = APIRouter(prefix="/screening", tags=["screening"])
 
@@ -130,8 +131,18 @@ async def start_screening_run(
     session.add(run)
     await session.flush()
 
-    # 3. Schedule execution after the admission transaction commits.
-    background_tasks.add_task(_execute_run, run.id, principal.tenant_id)
+    # 3. Persist the execution request with the admitted run. The post-response
+    # drain is only a wake-up hint; a later worker can safely resume this task.
+    runner = InProcessWorkflowRunner(get_sessionmaker())
+    await runner.enqueue_in_session(
+        session=session,
+        run_id=run.id,
+        stage="screening",
+        agent_name="screening",
+        tenant_id=principal.tenant_id,
+        tasks=[{}],
+    )
+    background_tasks.add_task(_drain_run, run.id, principal.tenant_id)
 
     # 4. Publish run.started event
     await _sse.publish(run.id, EventType.RUN_STARTED, {"run_id": str(run.id)})
@@ -364,14 +375,28 @@ async def _result_details(
     return details
 
 
-async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
-    """Execute one admitted run using a dedicated post-response transaction."""
+async def _drain_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
+    """Claim and execute the durable screening task for one admitted run."""
+    runner = InProcessWorkflowRunner(get_sessionmaker())
+    tasks = await runner.claim(run_id, "screening", limit=1)
+    if not tasks:
+        return
+    task = tasks[0]
+    await runner.heartbeat(run_id, "screening")
+    if await _execute_run(run_id, tenant_id):
+        await runner.complete(task.id, {"status": "ok", "run_id": str(run_id)})
+    else:
+        await runner.fail(task.id, "screening execution failed")
+
+
+async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> bool:
+    """Execute one claimed run using a dedicated worker transaction."""
     set_tenant_context(tenant_id)
     async with get_sessionmaker()() as session:
         try:
             run = await session.get(ScreeningRun, run_id)
             if run is None or run.tenant_id != tenant_id:
-                return
+                return True
             rubric = await session.get(RubricVersion, run.rubric_version_id)
             job = await session.get(Job, run.job_id)
             if rubric is None or job is None:
@@ -411,6 +436,7 @@ async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
                 EventType.RUN_COMPLETE,
                 {"run_id": str(run.id), "candidate_count": len(scores)},
             )
+            return True
         except Exception:
             await session.rollback()
             run = await session.get(ScreeningRun, run_id)
@@ -425,3 +451,4 @@ async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
                     "message": "Screening run failed. Please retry later.",
                 },
             )
+            return False

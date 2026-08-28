@@ -23,14 +23,25 @@ class _Result:
     def all(self) -> list[Any]:
         return self._values
 
+    def scalars(self) -> _Result:
+        return self
+
+    def __iter__(self) -> Any:
+        return iter(self._values)
+
 
 class _Session:
     def __init__(self, rows: list[tuple[RequirementVerdict, Requirement]]) -> None:
         self.rows = rows
         self.added: list[Any] = []
+        self.execute_count = 0
 
     async def execute(self, statement: Any) -> _Result:
-        return _Result(self.rows)
+        self.execute_count += 1
+        return _Result(self.rows if self.execute_count == 1 else [])
+
+    async def scalar(self, statement: Any) -> None:
+        return None
 
     def add(self, item: Any) -> None:
         self.added.append(item)

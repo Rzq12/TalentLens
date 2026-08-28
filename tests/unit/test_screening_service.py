@@ -32,6 +32,9 @@ class _Result:
     def all(self) -> list[Any]:
         return self._values
 
+    def __iter__(self) -> Any:
+        return iter(self._values)
+
 
 class _Session:
     def __init__(self, responses: list[_Result]) -> None:
@@ -158,6 +161,8 @@ async def test_execute_screening_run_persists_complete_ranked_scores() -> None:
         [
             _Result(requirements),
             _Result(list(zip(candidates, profiles, versions, strict=True))),
+            _Result([]),
+            _Result([]),
             _Result([]),
             _Result([]),
         ]

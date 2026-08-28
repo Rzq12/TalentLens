@@ -127,6 +127,14 @@ async def execute_screening_run(
     A judge failure is intentionally raised to the caller: publishing a partial
     ranking would make omitted candidates indistinguishable from weak candidates.
     """
+    if run.status == "completed":
+        existing = await session.execute(
+            select(CandidateScore)
+            .where(CandidateScore.run_id == run.id)
+            .order_by(CandidateScore.rank)
+        )
+        return list(existing.scalars().all())
+
     run.status = "running"
     run.started_at = run.started_at or datetime.now(UTC)
     requirements = list(
@@ -142,14 +150,28 @@ async def execute_screening_run(
         ).scalars().all()
     )
     profiles = await _candidate_profiles(session, run.tenant_id)
+    existing_scores = await session.execute(
+        select(CandidateScore.candidate_id).where(CandidateScore.run_id == run.id)
+    )
+    completed_candidates = set(existing_scores.scalars().all())
+    profiles_to_score = [
+        profile for profile in profiles if profile[0].id not in completed_candidates
+    ]
     run.candidate_count = len(profiles)
     run.funnel_stage_counts = {
         "eligible_profiles": len(profiles),
-        "judged": len(profiles),
+        "already_scored": len(completed_candidates),
+        "judged": len(profiles_to_score),
     }
-    scores: list[CandidateScore] = []
+    scores: list[CandidateScore] = list(
+        (
+            await session.execute(
+                select(CandidateScore).where(CandidateScore.run_id == run.id)
+            )
+        ).scalars().all()
+    )
 
-    for candidate, profile, version in profiles:
+    for candidate, profile, version in profiles_to_score:
         evidence, chunk_ids = await _evidence_for_version(session, version)
         judged: list[tuple[Requirement, VerdictOutput, AgentResult[JudgeOutput]]] = []
         for batch in _batches(requirements):
@@ -265,6 +287,7 @@ async def execute_screening_run(
         start=1,
     ):
         score.rank = rank
+    run.funnel_stage_counts["scored_total"] = len(scores)
     run.status = "completed"
     run.completed_at = datetime.now(UTC)
     return scores

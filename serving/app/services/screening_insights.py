@@ -79,6 +79,25 @@ async def persist_score_insights(
     if not rows:
         return
 
+    existing_kit = await session.scalar(
+        select(InterviewKit.id).where(
+            InterviewKit.tenant_id == score.tenant_id,
+            InterviewKit.score_id == score.id,
+        )
+    )
+    if existing_kit is not None:
+        return
+
+    existing_gaps = list(
+        (
+            await session.execute(
+                select(SkillGap).where(
+                    SkillGap.tenant_id == score.tenant_id,
+                    SkillGap.score_id == score.id,
+                )
+            )
+        ).scalars().all()
+    )
     verdicts = [
         {
             "requirement_id": str(requirement.id),
@@ -99,8 +118,22 @@ async def persist_score_insights(
         )
     except Exception:
         gap_result = None
-    gaps: list[dict[str, object]] = []
-    if gap_result is not None and gap_result.status == "ok" and gap_result.output is not None:
+    gaps: list[dict[str, object]] = [
+        {
+            "requirement_id": str(gap.requirement_id),
+            "severity": gap.severity,
+            "gap_type": gap.gap_type,
+            "suggested_probe": gap.suggested_probe,
+            "weight": gap.weight,
+        }
+        for gap in existing_gaps
+    ]
+    if (
+        not existing_gaps
+        and gap_result is not None
+        and gap_result.status == "ok"
+        and gap_result.output is not None
+    ):
         for gap in gap_result.output.gaps:
             if (
                 gap.requirement_id not in requirement_ids

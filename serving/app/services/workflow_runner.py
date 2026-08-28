@@ -49,34 +49,80 @@ class InProcessWorkflowRunner:
         tenant_id: uuid.UUID,
         tasks: list[dict[str, Any]],
     ) -> list[int]:
-        """Insert task rows and return their ids.
-
-        Args:
-            run_id: Parent screening run.
-            stage: Pipeline stage (judge, gap, interview, etc.).
-            agent_name: Agent registered in ``AgentRegistry``.
-            tenant_id: Owning tenant.
-            tasks: List of payload dicts, one per task.
-
-        Returns:
-            List of inserted task primary keys.
-        """
+        """Insert durable task rows in an independent transaction."""
         async with self._session_factory() as session:
-            ids: list[int] = []
-            for payload in tasks:
-                task = RunTask(
-                    tenant_id=tenant_id,
-                    run_id=run_id,
-                    stage=stage,
-                    agent_name=agent_name,
-                    payload=payload,
-                    status="pending",
-                )
-                session.add(task)
-                await session.flush()
-                ids.append(task.id)
+            ids = await self.enqueue_in_session(
+                session=session,
+                run_id=run_id,
+                stage=stage,
+                agent_name=agent_name,
+                tenant_id=tenant_id,
+                tasks=tasks,
+            )
             await session.commit()
             return ids
+
+    async def enqueue_in_session(
+        self,
+        *,
+        session: Any,
+        run_id: uuid.UUID,
+        stage: str,
+        agent_name: str,
+        tenant_id: uuid.UUID,
+        tasks: list[dict[str, Any]],
+    ) -> list[int]:
+        """Insert tasks into the caller's transaction with run admission."""
+        ids: list[int] = []
+        for payload in tasks:
+            task = RunTask(
+                tenant_id=tenant_id,
+                run_id=run_id,
+                stage=stage,
+                agent_name=agent_name,
+                payload=payload,
+                status="pending",
+            )
+            session.add(task)
+            await session.flush()
+            ids.append(task.id)
+        return ids
+
+    async def recover_claimed(self, older_than_seconds: int = 120) -> list[uuid.UUID]:
+        """Requeue work abandoned by a stopped worker and return affected runs."""
+        async with self._session_factory() as session:
+            cutoff = datetime.now(UTC) - timedelta(seconds=older_than_seconds)
+            result = await session.execute(
+                select(RunTask.run_id)
+                .where(RunTask.status == "claimed", RunTask.claimed_at < cutoff)
+                .distinct()
+            )
+            run_ids = [row[0] for row in result.all()]
+            if run_ids:
+                await session.execute(
+                    update(RunTask)
+                    .where(
+                        RunTask.run_id.in_(run_ids),
+                        RunTask.status == "claimed",
+                        RunTask.claimed_at < cutoff,
+                    )
+                    .values(status="pending", claimed_by=None, claimed_at=None)
+                )
+                for run_id in run_ids:
+                    checkpoint = await session.get(RunCheckpoint, run_id)
+                    if checkpoint is None:
+                        session.add(
+                            RunCheckpoint(
+                                run_id=run_id,
+                                last_stage="screening",
+                                heartbeat_at=datetime.now(UTC),
+                                resumed_count=1,
+                            )
+                        )
+                    else:
+                        checkpoint.resumed_count += 1
+                await session.commit()
+            return run_ids
 
     async def claim(
         self,
@@ -164,6 +210,27 @@ class InProcessWorkflowRunner:
                     )
                 )
             await session.commit()
+
+    async def ready_runs(
+        self,
+        stage: str = "screening",
+        limit: int = 100,
+    ) -> list[tuple[uuid.UUID, uuid.UUID]]:
+        """Return tenant-scoped runs that have ready work for a durable worker."""
+        async with self._session_factory() as session:
+            now = datetime.now(UTC)
+            result = await session.execute(
+                select(RunTask.run_id, RunTask.tenant_id)
+                .where(
+                    RunTask.stage == stage,
+                    RunTask.status == "pending",
+                    (RunTask.not_before.is_(None)) | (RunTask.not_before <= now),
+                )
+                .order_by(RunTask.id)
+                .limit(limit)
+                .distinct()
+            )
+            return [(row[0], row[1]) for row in result.all()]
 
     async def resume_stale(self, older_than_seconds: int = 120) -> list[uuid.UUID]:
         """Find runs whose heartbeat is older than threshold.

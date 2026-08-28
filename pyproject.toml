@@ -54,6 +54,7 @@ asyncio_mode = "auto"
 addopts = "-q --strict-markers"
 markers = [
     "integration: requires a live PostgreSQL instance (TALENTLENS_TEST_DATABASE_URL)",
+    "live: makes an opt-in, non-PII request to a configured external provider",
 ]
 
 [tool.coverage.run]
