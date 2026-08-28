@@ -19,28 +19,28 @@ are in place.**
 The ingestion and identity foundations came first, because a scoring system
 sitting on an unreliable parser produces confident nonsense. What exists today:
 
-| Working                                                               | In progress / Next                                |
-| --------------------------------------------------------------------- | ------------------------------------------------- |
-| JWT + Supabase JWKS authentication with tenant isolation              | Recruiter Chat (RAG, #14)                         |
-| Resume upload (PDF, DOCX) validated on content                        | Resume Improvement (candidate-facing, #10)        |
-| Deterministic parsing with exact character offsets                    | Live-provider evaluation and labelled quality set |
-| Content-hash deduplication with OCR fallback for scanned PDFs         | Live-provider evaluation and labelled quality set |
-| Job description upload (pasted text or document)                      | Retrieval funnel measurement and cost controls    |
-| Hybrid dense + lexical search with reranking                          | Fraud and bias sidecar wiring                     |
-| Rubric versioning, approval, weight normalization                     | Recruiter Chat (RAG, #14)                         |
-| JD Analyst rubric drafting                                            |                                                   |
-| Candidate scoring runs, ranks, verdicts, and verified evidence        |                                                   |
-| Skill-gap, interview, and recommendation insight persistence          |                                                   |
-| Detailed result endpoint for ranked assessments                       |                                                   |
-| Durable admission, Postgres task queue, retry/backoff, and worker service | Evaluation golden-set labelling (200+ recruiter cases) |
-| Recruiter decisions, verdict overrides, audit verification, and PostgreSQL coverage | Compliance delivery gates and DSAR workflow |
-| Tenant-local tamper-evident audit chain                               |                                                   |
-| RLS on all tenant-scoped tables                                       |                                                   |
-| ONNX e5-small embedding (CPU, no GPU)                                 |                                                   |
-| SSE progress streaming                                                |                                                   |
-| Alembic migrations, 31 ORM models                                     |                                                   |
-| Structured logging, uniform error envelope, /metrics                  |                                                   |
-| Dockerfile + docker-compose for local dev                             |                                                   |
+| Working                                                                             | In progress / Next                                     |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| JWT + Supabase JWKS authentication with tenant isolation                            | Recruiter Chat (RAG, #14)                              |
+| Resume upload (PDF, DOCX) validated on content                                      | Resume Improvement (candidate-facing, #10)             |
+| Deterministic parsing with exact character offsets                                  | Live-provider evaluation and labelled quality set      |
+| Content-hash deduplication with OCR fallback for scanned PDFs                       | Live-provider evaluation and labelled quality set      |
+| Job description upload (pasted text or document)                                    | Retrieval funnel measurement and cost controls         |
+| Hybrid dense + lexical search with reranking                                        | Fraud and bias sidecar wiring                          |
+| Rubric versioning, approval, weight normalization                                   | Recruiter Chat (RAG, #14)                              |
+| JD Analyst rubric drafting                                                          |                                                        |
+| Candidate scoring runs, ranks, verdicts, and verified evidence                      |                                                        |
+| Skill-gap, interview, and recommendation insight persistence                        |                                                        |
+| Detailed result endpoint for ranked assessments                                     |                                                        |
+| Durable admission, Postgres task queue, retry/backoff, and worker service           | Evaluation golden-set labelling (200+ recruiter cases) |
+| Recruiter decisions, verdict overrides, audit verification, and PostgreSQL coverage | Compliance delivery gates and DSAR workflow            |
+| Tenant-local tamper-evident audit chain                                             |                                                        |
+| RLS on all tenant-scoped tables                                                     |                                                        |
+| ONNX e5-small embedding (CPU, no GPU)                                               |                                                        |
+| SSE progress streaming                                                              |                                                        |
+| Alembic migrations, 31 ORM models                                                   |                                                        |
+| Structured logging, uniform error envelope, /metrics                                |                                                        |
+| Dockerfile + docker-compose for local dev                                           |                                                        |
 
 The eventual design is a multi-agent screening pipeline. This repository is the
 foundation it will sit on.
