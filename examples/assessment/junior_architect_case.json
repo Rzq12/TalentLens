@@ -1,0 +1,78 @@
+{
+  "job": {
+    "title": "Junior Architect",
+    "criteria": [
+      {
+        "key": "education",
+        "label": "Relevant education",
+        "weight": 0.20,
+        "terms": ["architecture", "architectural", "interior design"],
+        "minimum_matches": 1,
+        "gap_message": "No clear degree in architecture, interior design, or a related field."
+      },
+      {
+        "key": "experience",
+        "label": "Design and build experience",
+        "weight": 0.25,
+        "terms": ["design and build", "design & build", "interior project", "architectural project"],
+        "minimum_matches": 1,
+        "minimum_years": 2,
+        "gap_message": "Minimum 2 years of relevant design-and-build experience is not clearly evidenced."
+      },
+      {
+        "key": "software",
+        "label": "Architecture software",
+        "weight": 0.20,
+        "terms": ["autocad", "sketchup", "revit"],
+        "minimum_matches": 3,
+        "gap_message": "Not all required tools (AutoCAD, SketchUp, and Revit) are evidenced."
+      },
+      {
+        "key": "technical",
+        "label": "Technical and regulatory knowledge",
+        "weight": 0.15,
+        "terms": ["technical drawing", "construction drawing", "building code", "regulatory standard"],
+        "minimum_matches": 2,
+        "gap_message": "Technical drawing or building-code knowledge is not fully evidenced."
+      },
+      {
+        "key": "delivery",
+        "label": "Communication and project delivery",
+        "weight": 0.10,
+        "terms": ["communication", "project management", "presentation", "supplier", "procurement", "timeline"],
+        "minimum_matches": 3,
+        "gap_message": "Communication, presentation, or end-to-end project delivery evidence is limited."
+      },
+      {
+        "key": "availability",
+        "label": "Availability",
+        "weight": 0.10,
+        "terms": ["available immediately", "available asap", "join asap", "immediate"],
+        "minimum_matches": 1,
+        "gap_message": "ASAP availability is not stated."
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "name": "Alya Pratama",
+      "text": "Bachelor of Architecture. 3 years in design and build for residential and hospitality interior projects. Advanced AutoCAD, SketchUp, and Revit. Produces technical drawing and construction drawing packages and checks building codes. Handles project management, client communication, presentations, supplier procurement, and project timelines. Available immediately."
+    },
+    {
+      "name": "Bima Aditya",
+      "text": "Bachelor of Interior Design. 2.5 years delivering interior projects from concept to site completion. Uses AutoCAD and SketchUp daily; basic Revit. Creates technical drawings and coordinates regulatory standards. Strong presentation, communication, supplier sourcing, and timeline monitoring. Available ASAP."
+    },
+    {
+      "name": "Citra Lestari",
+      "text": "Bachelor of Architecture with 4 years of architectural project experience. Strong AutoCAD and Revit; limited SketchUp exposure. Experienced in construction drawing, building code review, project management, communication, and presentations. Availability after one month."
+    },
+    {
+      "name": "Eka Maharani",
+      "text": "Diploma in Interior Design. 2 years supporting interior project delivery and supplier procurement. Skilled in AutoCAD and SketchUp. Creates technical drawing sets and manages timelines and client presentations. Can join ASAP."
+    },
+    {
+      "name": "Dimas Saputra",
+      "text": "Bachelor of Civil Engineering. 1 year assisting architectural project documentation. Uses AutoCAD and reads construction drawings. Familiar with building codes and communicates with site teams. Available immediately."
+    }
+  ]
+}
