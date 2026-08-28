@@ -19,10 +19,22 @@ from sqlalchemy import select
 
 from app.db import DbSession, get_sessionmaker, set_tenant_context
 from app.exceptions import ResourceConflictError, ResourceNotFoundError
-from app.models import CandidateScore, Job, RubricVersion, ScreeningRun
+from app.models import (
+    CandidateScore,
+    EvidenceSpanRecord,
+    InterviewKit,
+    InterviewQuestion,
+    Job,
+    Requirement,
+    RequirementVerdict,
+    RubricVersion,
+    ScreeningRun,
+    SkillGap,
+)
 from app.security import ReadPrincipal, WritePrincipal
 from app.services.orchestration import AgentRegistry, Orchestrator
 from app.services.screening import execute_screening_run
+from app.services.screening_insights import persist_score_insights
 from app.services.sse import EventType, get_sse_manager
 
 router = APIRouter(prefix="/screening", tags=["screening"])
@@ -236,6 +248,8 @@ async def get_run_results(
     )
     result = await session.execute(stmt)
     scores = result.scalars().all()
+    score_ids = [score.id for score in scores]
+    details = await _result_details(session, principal.tenant_id, score_ids)
 
     return {
         "run_id": str(run.id),
@@ -243,14 +257,111 @@ async def get_run_results(
         "count": len(scores),
         "results": [
             {
-                "rank": s.rank,
-                "candidate_id": str(s.candidate_id),
-                "overall_score": float(s.overall_score),
-                "recommendation": s.recommendation,
+                "rank": score.rank,
+                "candidate_id": str(score.candidate_id),
+                "overall_score": float(score.overall_score),
+                "recommendation": score.recommendation,
+                "recommendation_confidence": score.recommendation_confidence,
+                "summary": score.summary,
+                **details.get(score.id, {}),
             }
-            for s in scores
+            for score in scores
         ],
     }
+
+
+async def _result_details(
+    session: DbSession, tenant_id: uuid.UUID, score_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dict[str, Any]]:
+    """Read persisted explanations without loading resume text into the response."""
+    details: dict[uuid.UUID, dict[str, Any]] = {
+        score_id: {"skill_gaps": [], "interview_questions": [], "verdicts": []}
+        for score_id in score_ids
+    }
+    if not score_ids:
+        return details
+
+    gaps = await session.execute(
+        select(SkillGap).where(
+            SkillGap.tenant_id == tenant_id, SkillGap.score_id.in_(score_ids)
+        )
+    )
+    for gap in gaps.scalars():
+        details[gap.score_id]["skill_gaps"].append(
+            {
+                "requirement_id": str(gap.requirement_id),
+                "severity": gap.severity,
+                "gap_type": gap.gap_type,
+                "suggested_probe": gap.suggested_probe,
+                "weight": gap.weight,
+            }
+        )
+
+    questions = await session.execute(
+        select(InterviewKit.score_id, InterviewQuestion)
+        .join(InterviewQuestion, InterviewQuestion.kit_id == InterviewKit.id)
+        .where(InterviewKit.tenant_id == tenant_id, InterviewKit.score_id.in_(score_ids))
+        .order_by(InterviewKit.score_id, InterviewQuestion.ordinal)
+    )
+    for score_id, question in questions.all():
+        details[score_id]["interview_questions"].append(
+            {
+                "ordinal": question.ordinal,
+                "question": question.question,
+                "category": question.category,
+                "difficulty": question.difficulty,
+                "targets_requirement_id": (
+                    str(question.targets_requirement_id)
+                    if question.targets_requirement_id
+                    else None
+                ),
+                "rationale": question.rationale,
+                "expected_signal": question.expected_signal,
+                "follow_ups": question.follow_ups.get("items", []) if question.follow_ups else [],
+            }
+        )
+
+    verdicts = await session.execute(
+        select(RequirementVerdict, Requirement, EvidenceSpanRecord)
+        .join(Requirement, Requirement.id == RequirementVerdict.requirement_id)
+        .outerjoin(EvidenceSpanRecord, EvidenceSpanRecord.verdict_id == RequirementVerdict.id)
+        .where(
+            RequirementVerdict.tenant_id == tenant_id,
+            RequirementVerdict.score_id.in_(score_ids),
+            Requirement.tenant_id == tenant_id,
+        )
+        .order_by(RequirementVerdict.score_id, Requirement.ordinal)
+    )
+    for verdict, requirement, evidence in verdicts.all():
+        score_verdicts = details[verdict.score_id]["verdicts"]
+        existing = next(
+            (item for item in score_verdicts if item["requirement_id"] == str(requirement.id)),
+            None,
+        )
+        if existing is None:
+            existing = {
+                "requirement_id": str(requirement.id),
+                "requirement": requirement.text,
+                "verdict": verdict.override_verdict or verdict.verdict,
+                "confidence": verdict.confidence,
+                "reasoning": verdict.reasoning,
+                "weight": float(verdict.weight_at_scoring),
+                "contribution": float(verdict.contribution),
+                "overridden": verdict.override_verdict is not None,
+                "evidence": [],
+            }
+            score_verdicts.append(existing)
+        if evidence is not None and evidence.verbatim_verified:
+            existing["evidence"].append(
+                {
+                    "page": evidence.page,
+                    "start_char": evidence.start_char,
+                    "end_char": evidence.end_char,
+                    "quoted_text": evidence.quoted_text,
+                    "relevance": evidence.relevance,
+                }
+            )
+    return details
 
 
 async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
@@ -274,12 +385,27 @@ async def _execute_run(run_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
                 job_title=job.title,
                 judge=judge,
             )
+            await _sse.publish(run.id, EventType.STAGE_STARTED, {"stage": "insights"})
+            for score in scores:
+                await persist_score_insights(
+                    session=session,
+                    score=score,
+                    skill_gap_agent=_registry.resolve("skill_gap"),
+                    interview_agent=_registry.resolve("interview"),
+                    recommendation_agent=_registry.resolve("recommendation"),
+                )
             await session.commit()
             await _sse.publish(
                 run.id,
                 EventType.STAGE_COMPLETE,
                 {"stage": "judge", "candidate_count": len(scores)},
             )
+            await _sse.publish(
+                run.id,
+                EventType.STAGE_COMPLETE,
+                {"stage": "insights", "candidate_count": len(scores)},
+            )
+
             await _sse.publish(
                 run.id,
                 EventType.RUN_COMPLETE,

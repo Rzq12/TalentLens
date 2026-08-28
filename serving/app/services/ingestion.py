@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from app.agents.ocr_agent import OcrAgent
 from app.config import Settings, get_settings
 from app.exceptions import (
     EmptyDocumentError,
@@ -27,6 +28,7 @@ from app.repositories.search import ChunkRepository
 from app.security import Principal
 from app.services.embedding import get_embedding_service
 from app.services.indexing import index_resume_version
+from app.services.ocr_fallback import apply_ocr_fallback
 from app.services.parser import parse_document
 from app.services.sanitize import sanitize_document
 from app.services.storage import ObjectStore, build_storage_key
@@ -161,6 +163,13 @@ async def ingest_resume(
     # loop for the duration and stall every concurrent request — a failure
     # mode this project has already paid for once.
     parsed = await run_in_threadpool(parse_document, content, media_type)
+    parsed = await apply_ocr_fallback(
+        parsed=parsed,
+        content=content,
+        document_id=uuid.uuid4(),
+        tenant_id=principal.tenant_id,
+        ocr=OcrAgent(),
+    )
 
     # Resume text is hostile input. Strip what is provably invisible before any
     # of it is stored, and quarantine the document if what remains looks like an
@@ -336,6 +345,7 @@ async def create_job_from_upload(
     """
     media_type = validate_upload(content, settings)
     parsed = await run_in_threadpool(parse_document, content, media_type)
+
     return await create_job_from_text(
         session=session,
         principal=principal,

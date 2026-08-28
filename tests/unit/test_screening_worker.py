@@ -95,12 +95,22 @@ async def test_execute_run_commits_and_publishes_terminal_events(
     monkeypatch.setattr(screening, "execute_screening_run", fake_execute)
     monkeypatch.setattr(screening._sse, "publish", capture_event)
 
+    insight_scores: list[object] = []
+
+    async def fake_persist_insights(**kwargs: Any) -> None:
+        insight_scores.append(kwargs["score"])
+
+    monkeypatch.setattr(screening, "persist_score_insights", fake_persist_insights)
+
     await screening._execute_run(run.id, run.tenant_id)
 
+    assert len(insight_scores) == 2
     assert session.commits == 1
     assert session.rollbacks == 0
     assert [event_type for _, event_type, _ in events] == [
         EventType.STAGE_STARTED,
+        EventType.STAGE_STARTED,
+        EventType.STAGE_COMPLETE,
         EventType.STAGE_COMPLETE,
         EventType.RUN_COMPLETE,
     ]
