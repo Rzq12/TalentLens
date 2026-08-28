@@ -17,8 +17,9 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 
 from app.agents.agent import Agent, AgentContext
 from app.models import RunTask as RunTaskModel
@@ -53,24 +54,29 @@ class AgentRegistry:
     """
 
     def __init__(self) -> None:
-        self._agents: dict[str, type[Agent]] = {}
+        self._agents: dict[str, tuple[str, Callable[[], Agent[Any, Any]]]] = {}
 
-    def register(self, agent_cls: type[Agent]) -> None:
+    def register(
+        self,
+        agent_cls: type[Agent[Any, Any]],
+        factory: Callable[[], Agent[Any, Any]] | None = None,
+    ) -> None:
+        """Register an agent class and its runtime constructor."""
         key = f"{agent_cls.name}@{agent_cls.version}"
-        self._agents[key] = agent_cls
+        self._agents[key] = (agent_cls.name, factory or agent_cls)
 
-    def resolve(self, name: str, version: str = "") -> Agent:
+    def resolve(self, name: str, version: str = "") -> Agent[Any, Any]:
         if version:
             key = f"{name}@{version}"
             if key in self._agents:
-                return self._agents[key]()
+                return self._agents[key][1]()
         # Find latest version of named agent
         matching = sorted(
             (k for k in self._agents if k.startswith(f"{name}@")),
             reverse=True,
         )
         if matching:
-            return self._agents[matching[0]]()
+            return self._agents[matching[0]][1]()
         raise KeyError(f"Agent '{name}' not found in registry")
 
     def list_agents(self) -> list[str]:
@@ -125,7 +131,7 @@ class Orchestrator:
             return StageOutcome(stage=stage, attempted=0)
 
         semaphore = asyncio.Semaphore(self.max_concurrency)
-        details: list[dict] = []
+        details: list[dict[str, object]] = []
 
         async def _run_one(task: RunTaskModel) -> None:
             async with semaphore:
@@ -177,9 +183,9 @@ class Orchestrator:
         stage: str,
         tenant_id: uuid.UUID,
         budget_seconds: float = 30.0,
-        claim_fn,
-        complete_fn,
-        fail_fn,
+        claim_fn: Callable[[uuid.UUID, str, int], Awaitable[list[RunTaskModel]]],
+        complete_fn: Callable[[int, dict[str, object]], Awaitable[None]],
+        fail_fn: Callable[[int, str], Awaitable[None]],
     ) -> DrainResult:
         """Drain one stage with a time budget.
 
@@ -202,7 +208,7 @@ class Orchestrator:
         total_rescheduled = 0
 
         while time.monotonic() - started < budget_seconds:
-            tasks = await claim_fn(run_id, stage, limit=200)
+            tasks = await claim_fn(run_id, stage, 200)
             if not tasks:
                 break
 

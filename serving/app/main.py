@@ -369,6 +369,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from app.agents.cv_parser import CvParserAgent
     from app.agents.education_analyzer import EducationAnalyzerAgent
     from app.agents.experience_analyzer import ExperienceAnalyzerAgent
+    from app.agents.factory import build_agent_factories
     from app.agents.fraud_detection import FraudAgent
     from app.agents.interview import InterviewAgent
     from app.agents.ocr_agent import OcrAgent
@@ -378,17 +379,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from app.agents.skill_gap import SkillGapAgent
     from app.routers.screening import get_registry
 
-    get_registry().register(OcrAgent)
-    get_registry().register(CvParserAgent)
-    get_registry().register(SkillExtractionAgent)
-    get_registry().register(ExperienceAnalyzerAgent)
-    get_registry().register(EducationAnalyzerAgent)
-    get_registry().register(AtsScoringAgent)
-    get_registry().register(SemanticMatchingAgent)
-    get_registry().register(SkillGapAgent)
-    get_registry().register(InterviewAgent)
-    get_registry().register(BiasAgent)
-    get_registry().register(FraudAgent)
-    get_registry().register(RecommendAgent)
+    factories = build_agent_factories(cfg)
+    registry = get_registry()
+    for agent_cls in (
+        OcrAgent,
+        CvParserAgent,
+        SkillExtractionAgent,
+        ExperienceAnalyzerAgent,
+        EducationAnalyzerAgent,
+        AtsScoringAgent,
+        SemanticMatchingAgent,
+        SkillGapAgent,
+        InterviewAgent,
+        BiasAgent,
+        FraudAgent,
+        RecommendAgent,
+    ):
+        registry.register(agent_cls, factories[agent_cls.name])
 
     return app
