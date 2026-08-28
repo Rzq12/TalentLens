@@ -166,6 +166,8 @@ except `/health`.
 | `GET` | `/api/v1/rubrics/templates` | List the starter templates |
 | `GET` | `/api/v1/rubrics/templates/{template_key}` | Read one starter template |
 | `POST` | `/api/v1/rubrics/templates/{template_key}:instantiate` | Seed a draft from a template |
+| `GET` | `/api/v1/demo/assessment/sample` | Sample Junior Architect job + 5 CVs (unauthenticated) |
+| `GET` | `/api/v1/demo/assessment/run` | Ranked report for the sample (unauthenticated) |
 
 Every response and error carries a `request_id`. Errors share one shape:
 
