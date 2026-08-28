@@ -19,26 +19,28 @@ are in place.**
 The ingestion and identity foundations came first, because a scoring system
 sitting on an unreliable parser produces confident nonsense. What exists today:
 
-| Working                                                        | In progress / Next                                |
-| -------------------------------------------------------------- | ------------------------------------------------- |
-| JWT + Supabase JWKS authentication with tenant isolation       | Recruiter Chat (RAG, #14)                         |
-| Resume upload (PDF, DOCX) validated on content                 | Resume Improvement (candidate-facing, #10)        |
-| Deterministic parsing with exact character offsets             | Live-provider evaluation and labelled quality set |
-| Content-hash deduplication with OCR fallback for scanned PDFs  | Full durable admission-to-execution handoff       |
-| Job description upload (pasted text or document)               | Retrieval funnel measurement and cost controls    |
-| Hybrid dense + lexical search with reranking                   | Fraud and bias sidecar wiring                     |
-| Rubric versioning, approval, weight normalization              | Human decision and override endpoints             |
-| JD Analyst rubric drafting                                     |                                                   |
-| Candidate scoring runs, ranks, verdicts, and verified evidence |                                                   |
-| Skill-gap, interview, and recommendation insight persistence   |                                                   |
-| Detailed result endpoint for ranked assessments                |                                                   |
-| In-process orchestrator and Postgres queue/recovery primitives |                                                   |
-| RLS on all tenant-scoped tables                                |                                                   |
-| ONNX e5-small embedding (CPU, no GPU)                          |                                                   |
-| SSE progress streaming                                         |                                                   |
-| Alembic migrations, 31 ORM models                              |                                                   |
-| Structured logging, uniform error envelope, /metrics           |                                                   |
-| Dockerfile + docker-compose for local dev                      |                                                   |
+| Working                                                               | In progress / Next                                |
+| --------------------------------------------------------------------- | ------------------------------------------------- |
+| JWT + Supabase JWKS authentication with tenant isolation              | Recruiter Chat (RAG, #14)                         |
+| Resume upload (PDF, DOCX) validated on content                        | Resume Improvement (candidate-facing, #10)        |
+| Deterministic parsing with exact character offsets                    | Live-provider evaluation and labelled quality set |
+| Content-hash deduplication with OCR fallback for scanned PDFs         | Worker retry/backoff policy and scheduling        |
+| Job description upload (pasted text or document)                      | Retrieval funnel measurement and cost controls    |
+| Hybrid dense + lexical search with reranking                          | Fraud and bias sidecar wiring                     |
+| Rubric versioning, approval, weight normalization                     | Human decision and override endpoints             |
+| JD Analyst rubric drafting                                            |                                                   |
+| Candidate scoring runs, ranks, verdicts, and verified evidence        |                                                   |
+| Skill-gap, interview, and recommendation insight persistence          |                                                   |
+| Detailed result endpoint for ranked assessments                       |                                                   |
+| Durable admission, Postgres task queue, and stale-claim recovery      | Worker retry/backoff policy and scheduler wiring  |
+| Recruiter decisions, verdict overrides, and tenant audit verification | PostgreSQL integration coverage for governance    |
+| Tenant-local tamper-evident audit chain                               |                                                   |
+| RLS on all tenant-scoped tables                                       |                                                   |
+| ONNX e5-small embedding (CPU, no GPU)                                 |                                                   |
+| SSE progress streaming                                                |                                                   |
+| Alembic migrations, 31 ORM models                                     |                                                   |
+| Structured logging, uniform error envelope, /metrics                  |                                                   |
+| Dockerfile + docker-compose for local dev                             |                                                   |
 
 The eventual design is a multi-agent screening pipeline. This repository is the
 foundation it will sit on.
@@ -175,6 +177,9 @@ except `/health`.
 | `GET`  | `/api/v1/screening/runs/{run_id}`                      | Poll run status                                       |
 | `GET`  | `/api/v1/screening/runs/{run_id}/events`               | SSE stream for run progress                           |
 | `GET`  | `/api/v1/screening/runs/{run_id}/results`              | Get ranked results of a completed run                 |
+| `POST` | `/api/v1/governance/scores/{score_id}/decisions`       | Record a human screening decision                     |
+| `POST` | `/api/v1/governance/verdicts/{verdict_id}/override`    | Record a reasoned verdict override                    |
+| `GET`  | `/api/v1/governance/audit/verify`                      | Verify the caller tenant's audit chain                |
 | `POST` | `/api/v1/rubrics/{rubric_version_id}/versions`         | Mint the next version                                 |
 | `POST` | `/api/v1/rubrics/{rubric_version_id}/score:preview`    | Score against hypothetical verdicts                   |
 | `GET`  | `/api/v1/rubrics/templates`                            | List the starter templates                            |
@@ -197,6 +202,33 @@ Every response and error carries a `request_id`. Errors share one shape:
 Upload validation is content-based: the media type comes from magic bytes, and
 DOCX is confirmed by inspecting the archive for `word/document.xml`. A `.pdf`
 filename over executable bytes is rejected `422`.
+
+## Operational behavior
+
+Screening admission persists a `ScreeningRun` and durable task in the same
+database transaction. The in-process runner and standalone worker can recover
+stale task claims and resume a run after interruption. Scoring reuses persisted
+candidate scores, evaluates only unfinished candidates, and reranks the complete
+set. Retry backoff, maximum-attempt policy, and production scheduler deployment
+are not implemented yet.
+
+Recruiters can record a decision on a score and override a displayed requirement
+verdict only with a reason. Overrides retain the original automated verdict and
+write tenant-local audit events. The decision actor is the authenticated
+principal UUID and is intentionally not required to have a local `users` row;
+apply Alembic revision `20260810_0100` before using these endpoints. PostgreSQL
+integration coverage for this migration and the governance API remains pending.
+
+External-provider smoke tests are opt-in and never reuse normal provider
+credentials. Set `TALENTLENS_RUN_LIVE_PROVIDER_TESTS=1` and configure one local
+dedicated credential, such as `TALENTLENS_LIVE_GOOGLE_API_KEY`, then run:
+
+```bash
+pytest tests/live/test_provider_smoke.py -q
+```
+
+Use synthetic T0 input only. Do not run a live test with applicant data or put
+credentials in `.env.example`, source control, or chat.
 
 ## Testing
 
@@ -223,6 +255,9 @@ Quality gates:
 ```bash
 ruff check . && mypy serving/app && pytest tests/ -q
 ```
+
+The live-provider marker is opt-in; a default full suite must report it as
+skipped when no dedicated `TALENTLENS_LIVE_*_API_KEY` is configured.
 
 ## Data handling
 

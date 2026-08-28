@@ -167,11 +167,37 @@ every route, schema, and field name. Now disabled when
 | **Secrets** | **Clean.** No credential in tracked files. `JWT_SECRET` and `SUPABASE_SERVICE_KEY` have no defaults and are blank in `.env.example`. `.env` and `*.key`/`*.pem` are gitignored. The only secret-shaped strings in the repo are deliberately named test fakes (`"test-secret-not-a-real-key"`). Production rejects a `JWT_SECRET` under 32 characters via a model validator. |
 | **Authentication** | **Strong.** Signature, expiry, issuer, and audience all verified; `alg=none` rejected because the algorithm allowlist is explicit; `exp` and `sub` required; a token without `tenant_id` is refused. 13 tests cover forgery, expiry, wrong issuer/audience, malformed input, and algorithm confusion. |
 | **Tenant isolation** | **Strong.** Every repository query filters on `tenant_id`. A foreign row returns 404, not 403 — existence is not disclosed. Verified for both resumes and jobs. |
-| **Prompt injection** | **Not currently exploitable — no LLM exists in this codebase.** See L-1. |
+| **Prompt injection** | **Mitigated in the current intake/model boundary.** Sanitization and PII-tier provider gates are implemented; adversarial corpus and score-drift gates remain pending. |
 
 ---
 
-## 5. Accepted / deferred risks
+## 5. Post-audit implementation status (2026-08-28)
+
+This section records changes made after the 2026-07-30 audit. It is not a new
+full audit and does not change the original finding counts above.
+
+- Alembic migrations, tenant RLS policies, and pgvector were applied and
+  validated against Neon/PostgreSQL.
+- Resume sanitization, OCR fallback, provider error normalization, and PII-tier
+  gates are now implemented. Live provider calls remain opt-in and must use only
+  synthetic T0 inputs with dedicated `TALENTLENS_LIVE_*_API_KEY` credentials.
+- The durable queue includes `run_tasks`, checkpoints, result cache, stale-claim
+  recovery, and a standalone one-pass worker. `ready_runs()` still needs direct
+  PostgreSQL validation; retry/backoff/max-attempt scheduling is unfinished.
+- Audit events are hash-chained and protected by a tenant PostgreSQL advisory
+  transaction lock. Unit tests verify both intact and tampered chains. The hash
+  currently excludes `occurred_at`, `ip_address`, and `request_id`; decide
+  whether these fields need integrity coverage before a regulator-readiness claim.
+- Governance endpoints record reasoned human decisions and verdict overrides,
+  retaining the original automated verdict. Migration `20260810_0100` removes
+  the local `users` foreign-key requirement for an authenticated external actor.
+  PostgreSQL migration and endpoint integration coverage remain pending.
+- Provider rate reservations are atomic across TPM/RPM/RPD buckets, but the
+  limiter is not yet integrated with provider dispatch or a durable reschedule.
+
+---
+
+## 6. Accepted / deferred risks
 
 | # | Risk | Severity | Rationale |
 |---|---|---|---|
@@ -184,7 +210,7 @@ every route, schema, and field name. Now disabled when
 
 ---
 
-## 6. Files changed by this audit
+## 7. Files changed by this audit
 
 | File | Change |
 |---|---|
