@@ -1,0 +1,255 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   TalentLens — Chain of Custody
+   A procedural evidence register, not a dashboard. Ruled form sheets, sequence
+   gutters, seal blocks. No cards. No pills above small controls. Radius 2px.
+--------------------------------------------------------------------------- */
+
+@theme {
+  /* Ground: form paper, pale olive. Second neutral layer is the register rail. */
+  --color-paper: #e9ebe3;
+  --color-leaf: #f2f3ec;
+  --color-register: #dfe2d6;
+  --color-recess: #d5d8ca;
+
+  /* Ink */
+  --color-ink: #191c16;
+  --color-ink-2: #4a4e43;
+  --color-ink-3: #63665a;
+
+  /* Rules — three declared weights, never one */
+  --color-rule-hair: #c8ccbe;
+  --color-rule-entry: #afb4a2;
+  --color-rule-section: #191c16;
+
+  /* Stamp violet: the single accent. Primary action, current selection. */
+  --color-stamp: #4a2e86;
+  --color-stamp-wash: #e2ddef;
+  --color-stamp-edge: #8a78bd;
+
+  /* Seal red: alarm only. Broken chain, override, must-have missing. */
+  --color-seal: #a81f14;
+  --color-seal-wash: #f2dcd9;
+
+  /* Ochre: partial, pending, in-flight. */
+  --color-ochre: #8a5a11;
+  --color-ochre-wash: #efe4cd;
+
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-narrow: var(--font-archivo-narrow), var(--font-archivo), sans-serif;
+  --font-mono: var(--font-azeret), ui-monospace, monospace;
+
+  /* Fixed rem scale, ratio ~1.18. Never fluid: this is a task surface. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 0.875rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.125rem;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.3125rem;
+  --text-xl--line-height: 1.625rem;
+  --text-2xl: 1.625rem;
+  --text-2xl--line-height: 1.875rem;
+  --text-3xl: 2.125rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-mono-num: 3.75rem;
+  --text-mono-num--line-height: 3.5rem;
+
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+
+  /* The sequence gutter: one global axis, present on all seven screens. */
+  --spacing-gutter: 4rem;
+  --spacing-rail: 14.5rem;
+  --spacing-rail-narrow: 3.5rem;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scrollbar-color: var(--color-rule-entry) var(--color-register);
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Browser surfaces we did not draw still carry the design. */
+  ::selection {
+    background-color: var(--color-stamp);
+    color: var(--color-leaf);
+  }
+
+  * {
+    caret-color: var(--color-stamp);
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-register);
+    border-left: 1px solid var(--color-rule-hair);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-rule-entry);
+    border: 3px solid var(--color-register);
+    border-radius: 0;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-3);
+  }
+  ::-webkit-scrollbar-corner {
+    background: var(--color-register);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-stamp);
+    outline-offset: 2px;
+    border-radius: 1px;
+  }
+
+  a {
+    text-underline-offset: 0.2em;
+    text-decoration-thickness: from-font;
+  }
+
+  /* Every figure in a register is a tabular figure. */
+  table,
+  .tnum,
+  [data-tnum] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  ::placeholder {
+    color: var(--color-ink-3);
+    opacity: 1;
+  }
+
+  dialog::backdrop {
+    background: color-mix(in oklab, #191c16 62%, transparent);
+    backdrop-filter: blur(1.5px);
+  }
+}
+
+@layer components {
+  /* The stamped label: narrow, uppercase, wide-tracked form caption. */
+  .stamp-label {
+    font-family: var(--font-narrow);
+    font-size: var(--text-2xs);
+    line-height: var(--text-2xs--line-height);
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+
+  /* Section rule: the heavy weight. Opens a form section. */
+  .rule-section {
+    border-top: 2px solid var(--color-rule-section);
+  }
+  .rule-entry {
+    border-top: 1px solid var(--color-rule-entry);
+  }
+  .rule-hair {
+    border-top: 1px solid var(--color-rule-hair);
+  }
+
+  /* Sheet: the ruled form leaf. Not a card — no radius, no shadow, no float. */
+  .sheet {
+    background-color: var(--color-leaf);
+    border: 1px solid var(--color-rule-entry);
+    border-radius: var(--radius-sm);
+  }
+
+  /* Ledger continuity tick: hairline spine running the sequence gutter. */
+  .tick-spine {
+    position: absolute;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-0.5px);
+    background: var(--color-rule-entry);
+  }
+  .tick-spine[data-live="true"] {
+    background: var(--color-stamp);
+    width: 2px;
+    transform: translateX(-1px);
+  }
+  .tick-spine[data-broken="true"] {
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--color-seal) 0 3px,
+      transparent 3px 7px
+    );
+  }
+
+  .num-monument {
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-num);
+    line-height: var(--text-mono-num--line-height);
+    letter-spacing: -0.035em;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  .track-tight {
+    letter-spacing: -0.022em;
+  }
+  .track-stamp {
+    letter-spacing: 0.09em;
+  }
+}
+
+/* Skeleton: the sheet develops, it does not spin. */
+@keyframes develop {
+  0% {
+    opacity: 0.32;
+  }
+  50% {
+    opacity: 0.72;
+  }
+  100% {
+    opacity: 0.32;
+  }
+}
+.developing {
+  animation: develop 1.6s var(--ease-out-expo) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
