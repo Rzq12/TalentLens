@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from app.db import DbSession
 from app.exceptions import CoreStageFailedError, ValidationFailedError
@@ -27,6 +27,7 @@ from app.schemas.rubric import (
     RequirementReplaceRequest,
     RequirementResponse,
     RubricCreateRequest,
+    RubricListResponse,
     RubricResponse,
     ScorePreviewRequest,
     ScorePreviewResponse,
@@ -136,6 +137,30 @@ async def create_rubric(
     )
     requirements = await repository.list_requirements(principal.tenant_id, version.id)
     return _to_response(version, requirements)
+
+
+@router.get(
+    "",
+    response_model=RubricListResponse,
+    summary="List rubric versions",
+)
+async def list_rubrics(
+    principal: ReadPrincipal,
+    session: DbSession,
+    job_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> RubricListResponse:
+    """Return recent rubric versions visible to the caller."""
+    repository = RubricRepository(session)
+    versions = await repository.list_versions(principal.tenant_id, job_id, limit)
+    items = [
+        _to_response(
+            version,
+            await repository.list_requirements(principal.tenant_id, version.id),
+        )
+        for version in versions
+    ]
+    return RubricListResponse(items=items, count=len(items))
 
 
 # --------------------------------------------------------------------------- #

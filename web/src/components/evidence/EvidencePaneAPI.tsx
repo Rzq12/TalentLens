@@ -264,7 +264,7 @@ export function EvidencePaneAPI({
       <OverrideDialogAPI
         open={overriding}
         onClose={() => setOverriding(false)}
-        candidateId={candidate.candidate_id}
+        candidateId={candidate.score_id}
       />
     </>
   );

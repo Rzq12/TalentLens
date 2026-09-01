@@ -228,7 +228,13 @@ export function useUploadResume() {
   const [error, setError] = useState<Error | null>(null);
   const [progress, setProgress] = useState(0);
 
-  const upload = useCallback(async (file: File) => {
+  const upload = useCallback(
+    async (
+      file: File,
+      candidateName: string,
+      candidateEmail?: string,
+      consentGranted = false,
+    ) => {
     try {
       setLoading(true);
       setError(null);
@@ -239,7 +245,12 @@ export function useUploadResume() {
         setProgress((p) => Math.min(p + 10, 90));
       }, 100);
 
-      const result = await API.resumes.upload(file);
+      const result = await API.resumes.upload(
+        file,
+        candidateName,
+        candidateEmail,
+        consentGranted,
+      );
       clearInterval(progressInterval);
       setProgress(100);
       return result;
@@ -250,7 +261,8 @@ export function useUploadResume() {
     } finally {
       setLoading(false);
     }
-  }, []);
+    }, [],
+  );
 
   return { upload, loading, error, progress };
 }
@@ -490,7 +502,7 @@ export function useSemanticSearch(query: string, limit = 20) {
     () =>
       query
         ? API.search.semantic(query, limit)
-        : Promise.resolve({ results: [], count: 0, query, took_ms: 0 }),
+        : Promise.resolve({ items: [], count: 0, query, mode: "semantic" }),
     [query, limit],
   );
 }
@@ -500,7 +512,7 @@ export function useLexicalSearch(query: string, limit = 20) {
     () =>
       query
         ? API.search.lexical(query, limit)
-        : Promise.resolve({ results: [], count: 0, query, took_ms: 0 }),
+        : Promise.resolve({ items: [], count: 0, query, mode: "lexical" }),
     [query, limit],
   );
 }

@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, status
+from fastapi import APIRouter, BackgroundTasks, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
@@ -170,6 +170,40 @@ async def start_screening_run(
 
 
 @router.get(
+    "/runs",
+    summary="List screening runs",
+)
+async def list_screening_runs(
+    session: DbSession,
+    principal: ReadPrincipal,
+    job_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Return recent screening runs visible to the caller."""
+    stmt = (
+        select(ScreeningRun)
+        .where(ScreeningRun.tenant_id == principal.tenant_id)
+        .order_by(ScreeningRun.created_at.desc())
+        .limit(limit)
+    )
+    if job_id is not None:
+        stmt = stmt.where(ScreeningRun.job_id == job_id)
+    runs = (await session.execute(stmt)).scalars().all()
+    items = [
+        {
+            "run_id": str(run.id),
+            "job_id": str(run.job_id),
+            "status": run.status,
+            "candidate_count": run.candidate_count,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        }
+        for run in runs
+    ]
+    return {"items": items, "count": len(items), "next_cursor": None}
+
+
+@router.get(
     "/runs/{run_id}",
     summary="Poll run status",
 )
@@ -283,6 +317,7 @@ async def get_run_results(
         "count": len(scores),
         "results": [
             {
+                "score_id": str(score.id),
                 "rank": score.rank,
                 "candidate_id": str(score.candidate_id),
                 "overall_score": float(score.overall_score),

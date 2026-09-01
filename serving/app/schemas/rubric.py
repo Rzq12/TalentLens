@@ -188,6 +188,14 @@ class RubricResponse(BaseModel):
     requirements: list[RequirementResponse] = Field(default_factory=list)
 
 
+class RubricListResponse(BaseModel):
+    """A tenant-scoped page of rubric versions."""
+
+    items: list[RubricResponse] = Field(default_factory=list)
+    count: int = 0
+    next_cursor: str | None = None
+
+
 # --------------------------------------------------------------------------- #
 # Score preview                                                                #
 # --------------------------------------------------------------------------- #

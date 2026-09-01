@@ -68,6 +68,10 @@ async function apiFetch<T>(
     );
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return response.json() as Promise<T>;
 }
 
@@ -101,19 +105,54 @@ export interface JobResponse extends JobSummary {
 }
 
 export const jobsAPI = {
-  list: (limit = 50, before?: string) =>
-    apiFetch<JobListResponse>("/jobs", { query: { limit, before } }),
+  list: async (limit = 50, before?: string): Promise<JobListResponse> => {
+    const response = await apiFetch<{
+      items: Array<Omit<JobSummary, "job_id"> & { id: string }>;
+      count: number;
+      next_cursor?: string | null;
+    }>("/jobs", { query: { limit, before } });
+    return {
+      ...response,
+      items: response.items.map(({ id, ...job }) => ({ ...job, job_id: id })),
+    };
+  },
 
-  get: (jobId: string) => apiFetch<JobResponse>(`/jobs/${jobId}`),
+  get: async (jobId: string): Promise<JobResponse> => {
+    const job = await apiFetch<{
+      id: string;
+      title: string;
+      description_raw: string;
+      department?: string;
+      location?: string;
+      employment_type?: string;
+      seniority?: string;
+      status: JobResponse["status"];
+      created_at: string;
+    }>(`/jobs/${jobId}`);
+    return { ...job, job_id: job.id };
+  },
 
-  create: (data: {
+  create: async (data: {
     title: string;
     description_raw: string;
     department?: string;
     location?: string;
     employment_type?: string;
     seniority?: string;
-  }) => apiFetch<JobResponse>("/jobs", { method: "POST", body: data }),
+  }): Promise<JobResponse> => {
+    const job = await apiFetch<{
+      id: string;
+      title: string;
+      description_raw: string;
+      department?: string;
+      location?: string;
+      employment_type?: string;
+      seniority?: string;
+      status: JobResponse["status"];
+      created_at: string;
+    }>("/jobs", { method: "POST", body: data });
+    return { ...job, job_id: job.id };
+  },
 
   uploadDocument: async (file: File, title: string) => {
     const formData = new FormData();
@@ -137,7 +176,18 @@ export const jobsAPI = {
       throw new Error(`Upload failed: ${response.statusText}`);
     }
 
-    return response.json() as Promise<JobResponse>;
+    const job = (await response.json()) as {
+      id: string;
+      title: string;
+      description_raw: string;
+      department?: string;
+      location?: string;
+      employment_type?: string;
+      seniority?: string;
+      status: JobResponse["status"];
+      created_at: string;
+    };
+    return { ...job, job_id: job.id };
   },
 };
 
@@ -162,6 +212,15 @@ export interface ResumeListResponse {
   next_cursor?: string | null;
 }
 
+export interface ResumeUploadResponse extends ResumeSummary {
+  candidate_id: string;
+  profile_id: string;
+  size_bytes: number;
+  sha256: string;
+  deduplicated: boolean;
+  quarantined: boolean;
+}
+
 export interface ResumeDetailResponse extends ResumeSummary {
   size_bytes: number;
   sha256: string;
@@ -180,9 +239,17 @@ export const resumesAPI = {
   get: (documentId: string) =>
     apiFetch<ResumeDetailResponse>(`/resumes/${documentId}`),
 
-  upload: async (file: File) => {
+  upload: async (
+    file: File,
+    candidateName: string,
+    candidateEmail?: string,
+    consentGranted = false,
+  ): Promise<ResumeUploadResponse> => {
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("candidate_name", candidateName);
+    if (candidateEmail) formData.append("candidate_email", candidateEmail);
+    formData.append("consent_granted", String(consentGranted));
 
     const token =
       typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
@@ -201,7 +268,7 @@ export const resumesAPI = {
       throw new Error(`Upload failed: ${response.statusText}`);
     }
 
-    return response.json();
+    return response.json() as Promise<ResumeUploadResponse>;
   },
 };
 
@@ -224,7 +291,7 @@ export interface RubricResponse {
   rubric_id: string;
   job_id: string;
   version: string;
-  status: "draft" | "approved";
+  status: "draft" | "approved" | "superseded";
   requirements: RequirementRow[];
   created_at: string;
 }
@@ -235,29 +302,91 @@ export interface RubricListResponse {
   next_cursor?: string | null;
 }
 
+interface BackendRubricResponse {
+  rubric_version_id: string;
+  job_id: string;
+  version: number;
+  status: RubricResponse["status"] | "superseded";
+  requirements: Array<{
+    id: string;
+    text: string;
+    is_must_have: boolean;
+    weight: number;
+    min_years?: number | null;
+  }>;
+}
+
+const mapRubric = (rubric: BackendRubricResponse): RubricResponse => ({
+  rubric_id: rubric.rubric_version_id,
+  job_id: rubric.job_id,
+  version: String(rubric.version),
+  status: rubric.status,
+  requirements: rubric.requirements.map((requirement) => ({
+    requirement_id: requirement.id,
+    label: requirement.text,
+    must_have: requirement.is_must_have,
+    weight: Number(requirement.weight) * 100,
+    min_years: requirement.min_years ?? undefined,
+  })),
+  created_at: new Date().toISOString(),
+});
+
 export const rubricsAPI = {
-  list: (jobId?: string, limit = 50, before?: string) =>
-    apiFetch<RubricListResponse>("/rubrics", {
-      query: { job_id: jobId, limit, before },
-    }),
+  list: async (jobId?: string, limit = 50, before?: string) => {
+    const response = await apiFetch<{
+      items: BackendRubricResponse[];
+      count: number;
+      next_cursor?: string | null;
+    }>("/rubrics", { query: { job_id: jobId, limit, before } });
+    return { ...response, items: response.items.map(mapRubric) };
+  },
 
-  get: (rubricId: string) => apiFetch<RubricResponse>(`/rubrics/${rubricId}`),
+  get: async (rubricId: string) =>
+    mapRubric(await apiFetch<BackendRubricResponse>(`/rubrics/${rubricId}`)),
 
-  create: (data: {
+  create: async (data: {
     job_id: string;
     requirements: Omit<RequirementRow, "requirement_id">[];
-  }) => apiFetch<RubricResponse>("/rubrics", { method: "POST", body: data }),
-
-  update: (rubricId: string, data: Partial<RubricResponse>) =>
-    apiFetch<RubricResponse>(`/rubrics/${rubricId}`, {
-      method: "PATCH",
-      body: data,
-    }),
-
-  approve: (rubricId: string) =>
-    apiFetch<RubricResponse>(`/rubrics/${rubricId}/approve`, {
+  }): Promise<RubricResponse> => {
+    const response = await apiFetch<BackendRubricResponse>("/rubrics", {
       method: "POST",
-    }),
+      body: {
+        job_id: data.job_id,
+        requirements: data.requirements.map((requirement) => ({
+          text: requirement.label,
+          category: "skill",
+          is_must_have: requirement.must_have,
+          weight: requirement.weight / 100,
+          min_years: requirement.min_years,
+        })),
+      },
+    });
+    return mapRubric(response);
+  },
+
+  update: async (rubricId: string, data: Partial<RubricResponse>) => {
+    const response = await apiFetch<BackendRubricResponse>(
+      `/rubrics/${rubricId}/requirements`,
+      {
+        method: "POST",
+        body: {
+          requirements: (data.requirements ?? []).map((requirement) => ({
+            text: requirement.label,
+            category: "skill",
+            is_must_have: requirement.must_have,
+            weight: requirement.weight / 100,
+            min_years: requirement.min_years,
+          })),
+        },
+      },
+    );
+    return mapRubric(response);
+  },
+
+  approve: async (rubricId: string) =>
+    mapRubric(await apiFetch<BackendRubricResponse>(`/rubrics/${rubricId}/approve`, {
+      method: "POST",
+    })),
 };
 
 // ============================================================================
@@ -292,7 +421,30 @@ export interface ScreeningRunListResponse {
   next_cursor?: string | null;
 }
 
+interface BackendScreeningRun {
+  run_id: string;
+  job_id: string;
+  status: ScreeningRunResponse["status"];
+  candidate_count: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+const mapScreeningRun = (run: BackendScreeningRun): ScreeningRunResponse => ({
+  run_id: run.run_id,
+  job_id: run.job_id,
+  rubric_version: "",
+  status: run.status,
+  total_resumes: run.candidate_count,
+  processed: run.candidate_count,
+  stages: [],
+  started_at: run.started_at ?? undefined,
+  completed_at: run.completed_at ?? undefined,
+  created_at: run.started_at ?? new Date().toISOString(),
+});
+
 export interface RunResult {
+  score_id: string;
   rank: number;
   candidate_id: string;
   overall_score: number;
@@ -312,18 +464,27 @@ export interface RunResultsResponse {
 }
 
 export const screeningAPI = {
-  list: (jobId?: string, limit = 50, before?: string) =>
-    apiFetch<ScreeningRunListResponse>("/screening/runs", {
-      query: { job_id: jobId, limit, before },
-    }),
+  list: async (jobId?: string, limit = 50, before?: string) => {
+    const response = await apiFetch<{
+      items: BackendScreeningRun[];
+      count: number;
+      next_cursor?: string | null;
+    }>("/screening/runs", { query: { job_id: jobId, limit, before } });
+    return { ...response, items: response.items.map(mapScreeningRun) };
+  },
 
-  get: (runId: string) =>
-    apiFetch<ScreeningRunResponse>(`/screening/runs/${runId}`),
+  get: async (runId: string) =>
+    mapScreeningRun(
+      await apiFetch<BackendScreeningRun>(`/screening/runs/${runId}`),
+    ),
+
+  events: (runId: string) =>
+    `${API_BASE}/screening/runs/${runId}/events`,
 
   /** Start a run — posted to /jobs/{jobId}/runs (screening router handles it) */
   start: (jobId: string) =>
     apiFetch<{ run_id: string; status: string; events_url: string }>(
-      `/jobs/${jobId}/runs`,
+      `/screening/jobs/${jobId}/runs`,
       { method: "POST" },
     ),
 
@@ -355,6 +516,7 @@ export interface RequirementFinding {
 }
 
 export interface CandidateAssessment {
+  score_id: string;
   candidate_id: string;
   run_id: string;
   rank: number;
@@ -394,6 +556,7 @@ export const candidatesAPI = {
     );
     // Map RunResult → CandidateAssessment shape
     const items: CandidateAssessment[] = (res.results ?? []).map((r) => ({
+      score_id: r.score_id,
       candidate_id: r.candidate_id,
       run_id: runId,
       rank: r.rank,
@@ -505,28 +668,44 @@ export const governanceAPI = {
 // ============================================================================
 
 export interface SearchResult {
-  candidate_id: string;
-  candidate_name: string;
-  relevance_score: number;
-  matched_spans: string[];
+  document_id: string;
+  score: number;
+  spans: Array<{
+    chunk_id: string;
+    content: string;
+    section: string;
+    page_from: number;
+    page_to: number;
+    start_char: number;
+    end_char: number;
+    score: number;
+  }>;
 }
 
 export interface SearchResponse {
-  results: SearchResult[];
+  items: SearchResult[];
   count: number;
   query: string;
-  took_ms: number;
+  mode: string;
 }
 
 export const searchAPI = {
   semantic: (query: string, limit = 20) =>
-    apiFetch<SearchResponse>("/search/semantic", {
-      query: { q: query, limit },
+    apiFetch<SearchResponse>("/search/candidates", {
+      method: "POST",
+      body: { query, top_k: limit, mode: "semantic" },
     }),
 
   lexical: (query: string, limit = 20) =>
-    apiFetch<SearchResponse>("/search/lexical", {
-      query: { q: query, limit },
+    apiFetch<SearchResponse>("/search/candidates", {
+      method: "POST",
+      body: { query, top_k: limit, mode: "lexical" },
+    }),
+
+  similar: (documentId: string, limit = 20) =>
+    apiFetch<SearchResponse>("/search/similar", {
+      method: "POST",
+      body: { document_id: documentId, top_k: limit },
     }),
 };
 
@@ -544,11 +723,10 @@ export interface AuthResponse {
 }
 
 export const authAPI = {
-  login: (email: string, password: string) =>
-    apiFetch<AuthResponse>("/auth/login", {
-      method: "POST",
-      body: { email, password },
-    }),
+  me: () =>
+    apiFetch<{ user_id: string; tenant_id: string; roles: string[] }>(
+      "/auth/me",
+    ),
 
   logout: () => {
     if (typeof window !== "undefined") {
