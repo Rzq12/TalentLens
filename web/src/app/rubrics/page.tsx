@@ -1,12 +1,13 @@
 "use client";
 
+import { Suspense } from "react";
 import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { SealBlock } from "@/components/ui/Seal";
 import { RubricEditorAPI } from "@/components/rubric/RubricEditorAPI";
 import { useRubrics } from "@/lib/hooks";
 import { useSearchParams } from "next/navigation";
 
-export default function RubricsPage() {
+function RubricsContent() {
   const searchParams = useSearchParams();
   const rubricId = searchParams.get("rubricId") ?? undefined;
   const jobId = searchParams.get("jobId") ?? undefined;
@@ -68,5 +69,15 @@ export default function RubricsPage() {
         jobId={jobId}
       />
     </>
+  );
+}
+
+export default function RubricsPage() {
+  return (
+    <Suspense
+      fallback={<div className="p-8 text-sm text-ink-3">Loading rubric...</div>}
+    >
+      <RubricsContent />
+    </Suspense>
   );
 }

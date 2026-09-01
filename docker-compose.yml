@@ -40,6 +40,7 @@ services:
       JWT_AUDIENCE: authenticated
       STORAGE_BACKEND: memory
       ENVIRONMENT: development
+      DEV_AUTH_ENABLED: "true"
       LOG_LEVEL: DEBUG
       CORS_ALLOW_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
     depends_on:

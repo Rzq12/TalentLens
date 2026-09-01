@@ -45,9 +45,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${archivo.variable} ${archivoNarrow.variable} ${azeret.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">
+      <body suppressHydrationWarning className="flex min-h-full flex-col">
         <div
           hidden
           dangerouslySetInnerHTML={{ __html: `<!--${DIRECTION_CONTRACT}-->` }}

@@ -23,6 +23,7 @@ interface FetchOptions {
 async function apiFetch<T>(
   path: string,
   options: FetchOptions = {},
+  allowDevBootstrap = true,
 ): Promise<T> {
   const { method = "GET", headers = {}, body, query } = options;
 
@@ -58,6 +59,20 @@ async function apiFetch<T>(
     headers: requestHeaders,
     body: body ? JSON.stringify(body) : undefined,
   });
+
+  if (
+    response.status === 401 &&
+    allowDevBootstrap &&
+    typeof window !== "undefined" &&
+    path !== "/auth/dev-token"
+  ) {
+    const tokenResponse = await fetch(`${API_BASE}/auth/dev-token`);
+    if (tokenResponse.ok) {
+      const token = (await tokenResponse.json()) as { access_token: string };
+      localStorage.setItem("auth_token", token.access_token);
+      return apiFetch<T>(path, options, false);
+    }
+  }
 
   if (!response.ok) {
     const error = await response

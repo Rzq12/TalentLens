@@ -15,12 +15,35 @@ import {
   Tr,
   GutterCell,
 } from "@/components/ledger/Ledger";
-import { useJobs } from "@/lib/hooks";
+import { useCreateJob, useJobs } from "@/lib/hooks";
 
 export default function JobsPage() {
   const { data: jobsData, loading, error } = useJobs(50);
   const jobs = jobsData ?? [];
   const [filter, setFilter] = useState({ department: "all", rubric: "all" });
+  const [openForm, setOpenForm] = useState(false);
+  const [form, setForm] = useState({
+    title: "",
+    description_raw: "",
+    department: "",
+    location: "",
+    employment_type: "",
+    seniority: "",
+  });
+  const { create, loading: creating, error: createError } = useCreateJob();
+
+  const submitJob = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await create({
+      ...form,
+      department: form.department || undefined,
+      location: form.location || undefined,
+      employment_type: form.employment_type || undefined,
+      seniority: form.seniority || undefined,
+    });
+    setOpenForm(false);
+    window.location.reload();
+  };
 
   if (error) {
     return (
@@ -62,11 +85,87 @@ export default function JobsPage() {
           />
         }
         actions={
-          <Button variant="stamp" icon="plus">
+          <Button variant="stamp" icon="plus" onClick={() => setOpenForm(true)}>
             Open a position
           </Button>
         }
       />
+        {openForm ? (
+          <div className="fixed inset-0 z-40 flex items-start justify-center bg-ink/40 px-4 py-8">
+            <form
+              onSubmit={submitJob}
+              className="w-full max-w-2xl border-2 border-rule-section bg-leaf p-5 shadow-lg md:p-8"
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-rule-entry pb-4">
+                <div>
+                  <p className="stamp-label">New position</p>
+                  <h2 className="mt-1 text-2xl font-semibold track-tight text-ink">
+                    Open a position
+                  </h2>
+                </div>
+                <Button
+                  variant="quiet"
+                  icon="cross"
+                  aria-label="Close position form"
+                  type="button"
+                  onClick={() => setOpenForm(false)}
+                />
+              </div>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <TextField
+                  label="Title"
+                  required
+                  value={form.title}
+                  onChange={(event) => setForm({ ...form, title: event.target.value })}
+                />
+                <TextField
+                  label="Department"
+                  value={form.department}
+                  onChange={(event) => setForm({ ...form, department: event.target.value })}
+                />
+                <TextField
+                  label="Location"
+                  value={form.location}
+                  onChange={(event) => setForm({ ...form, location: event.target.value })}
+                />
+                <TextField
+                  label="Employment type"
+                  value={form.employment_type}
+                  onChange={(event) => setForm({ ...form, employment_type: event.target.value })}
+                />
+                <TextField
+                  label="Seniority"
+                  value={form.seniority}
+                  onChange={(event) => setForm({ ...form, seniority: event.target.value })}
+                />
+                <label className="sm:col-span-2">
+                  <span className="stamp-label">Job description</span>
+                  <textarea
+                    required
+                    value={form.description_raw}
+                    onChange={(event) => setForm({ ...form, description_raw: event.target.value })}
+                    className="mt-1 min-h-40 w-full border border-rule-entry bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-stamp"
+                  />
+                </label>
+              </div>
+              {createError ? (
+                <p className="mt-4 text-sm text-seal">{createError.message}</p>
+              ) : null}
+              <div className="mt-6 flex justify-end gap-2 border-t border-rule-entry pt-4">
+                <Button
+                  variant="quiet"
+                  type="button"
+                  onClick={() => setOpenForm(false)}
+                >
+                  Cancel
+                </Button>
+                <Button variant="stamp" type="submit" loading={creating}>
+                  Create position
+                </Button>
+              </div>
+            </form>
+          </div>
+        ) : null}
 
       <Toolbar>
         <TextField

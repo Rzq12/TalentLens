@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     # against Supabase's public JWKS endpoint rather than a shared secret.
     # This is the revised-stack auth strategy (ARCHITECTURE-AGENTS.md §1.3).
     supabase_auth_jwks_url: str = ""
+    dev_auth_enabled: bool = False
 
     storage_backend: Literal["memory", "supabase"] = "memory"
     supabase_url: str = ""
