@@ -43,6 +43,15 @@ services:
       LOG_LEVEL: DEBUG
       CORS_ALLOW_ORIGINS: '["http://localhost:5173"]'
     depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *app_environment
+    depends_on:
       db:
         condition: service_healthy
 
@@ -53,8 +62,8 @@ services:
       <<: *app_environment
       WORKER_CONTINUOUS: "true"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

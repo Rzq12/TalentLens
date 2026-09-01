@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY pyproject.toml requirements.lock ./
+COPY pyproject.toml requirements.lock alembic.ini ./
 COPY serving/ serving/
 
 RUN pip install --no-cache-dir --upgrade pip \
