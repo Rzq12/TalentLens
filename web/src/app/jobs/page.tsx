@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { Button } from "@/components/ui/Button";
@@ -16,11 +19,34 @@ import {
   Tr,
   GutterCell,
 } from "@/components/ledger/Ledger";
-import { JOBS } from "@/lib/demo";
-
-export const metadata = { title: "Jobs — TalentLens" };
+import { useJobs } from "@/lib/hooks";
 
 export default function JobsPage() {
+  const { data: jobsData, loading, error } = useJobs(50);
+  const jobs = jobsData ?? [];
+  const [filter, setFilter] = useState({ department: "all", rubric: "all" });
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <p className="text-lg font-medium text-seal">Error loading jobs</p>
+          <p className="text-sm text-ink-3 mt-2">{error.message}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const filteredJobs = jobs.filter((job) => {
+    if (filter.department !== "all" && job.department !== filter.department) {
+      return false;
+    }
+    if (filter.rubric !== "all" && job.status !== filter.rubric.toLowerCase()) {
+      return false;
+    }
+    return true;
+  });
+
   return (
     <>
       <Masthead
@@ -28,7 +54,7 @@ export default function JobsPage() {
         meta={
           <>
             <MetaFact label="Register" value="Positions" />
-            <MetaFact label="Entries" value={JOBS.length} mono />
+            <MetaFact label="Entries" value={filteredJobs.length} mono />
             <MetaFact label="Tenant" value="demo" mono />
           </>
         }
@@ -56,17 +82,31 @@ export default function JobsPage() {
           icon="search"
           className="min-w-[16rem] flex-1"
         />
-        <SelectField label="Department" defaultValue="all" className="w-44">
+        <SelectField
+          label="Department"
+          defaultValue="all"
+          className="w-44"
+          onChange={(e) =>
+            setFilter({ ...filter, department: e.currentTarget.value })
+          }
+        >
           <option value="all">All departments</option>
           <option>Engineering</option>
           <option>Design</option>
           <option>Legal &amp; Risk</option>
           <option>People</option>
         </SelectField>
-        <SelectField label="Rubric" defaultValue="all" className="w-40">
+        <SelectField
+          label="Rubric"
+          defaultValue="all"
+          className="w-40"
+          onChange={(e) =>
+            setFilter({ ...filter, rubric: e.currentTarget.value })
+          }
+        >
           <option value="all">Any state</option>
-          <option>Approved</option>
-          <option>Draft</option>
+          <option value="approved">Approved</option>
+          <option value="draft">Draft</option>
         </SelectField>
       </Toolbar>
 
@@ -91,71 +131,86 @@ export default function JobsPage() {
           </Th>
         </LedgerHead>
         <tbody>
-          {JOBS.map((job, i) => {
-            const draft = job.rubric === "draft";
-            return (
-              <Tr key={job.id}>
-                <GutterCell
-                  ordinal={i + 1}
-                  first={i === 0}
-                  last={i === JOBS.length - 1}
-                  broken={draft}
-                />
-                <Td>
-                  <Link
-                    href={`/runs/${job.latestRun ?? "SR-294"}`}
-                    className="font-medium text-ink no-underline hover:text-stamp hover:underline"
-                  >
-                    {job.title}
-                  </Link>
-                  <div className="font-mono text-2xs text-ink-3">{job.id}</div>
-                </Td>
-                <Td className="text-ink-2">{job.department}</Td>
-                <Td>
-                  <Seal tone={draft ? "draft" : "intact"}>
-                    {draft ? "Draft" : "Approved"}
-                  </Seal>
-                  <span className="ml-2 font-mono text-2xs text-ink-3">
-                    {job.rubricVersion}
-                  </span>
-                </Td>
-                <Td align="right" className="font-mono tabular-nums text-ink">
-                  {job.resumes}
-                </Td>
-                <Td>
-                  {job.latestRun ? (
-                    <>
-                      <Link
-                        href={`/runs/${job.latestRun}`}
-                        className="font-mono text-xs text-ink no-underline hover:text-stamp hover:underline"
-                      >
-                        {job.latestRun}
-                      </Link>
-                      <div className="font-mono text-2xs text-ink-3">
-                        {job.latestRunAt}
-                      </div>
-                    </>
-                  ) : (
-                    <span className="text-xs text-ink-3">No run recorded</span>
-                  )}
-                </Td>
-                <Td align="right">
-                  <Button
-                    variant={draft ? "ruled" : "stamp"}
-                    disabled={draft}
-                    icon="run"
-                    title={
-                      draft
-                        ? "The rubric must be approved and frozen before a run can start"
-                        : undefined
-                    }
-                  >
-                    Start screening
-                  </Button>
-                </Td>
-              </Tr>
-            );
-          })}
+          {loading ? (
+            <Tr>
+              <Td colSpan={7} className="text-center py-8">
+                <div className="text-ink-3">Loading jobs...</div>
+              </Td>
+            </Tr>
+          ) : filteredJobs.length === 0 ? (
+            <Tr>
+              <Td colSpan={7} className="text-center py-8">
+                <div className="text-ink-3">No jobs found</div>
+              </Td>
+            </Tr>
+          ) : (
+            filteredJobs.map((job, i) => {
+              const draft = job.status === "draft";
+              return (
+                <Tr key={job.job_id}>
+                  <GutterCell
+                    ordinal={i + 1}
+                    first={i === 0}
+                    last={i === filteredJobs.length - 1}
+                    broken={draft}
+                  />
+                  <Td>
+                    <Link
+                      href={`/runs/${job.latest_screening_run_id ?? "SR-294"}`}
+                      className="font-medium text-ink no-underline hover:text-stamp hover:underline"
+                    >
+                      {job.title}
+                    </Link>
+                    <div className="font-mono text-2xs text-ink-3">
+                      {job.job_id}
+                    </div>
+                  </Td>
+                  <Td className="text-ink-2">{job.department || "—"}</Td>
+                  <Td>
+                    <Seal tone={draft ? "draft" : "intact"}>
+                      {draft ? "Draft" : "Approved"}
+                    </Seal>
+                  </Td>
+                  <Td align="right" className="font-mono tabular-nums text-ink">
+                    {job.resume_count || 0}
+                  </Td>
+                  <Td>
+                    {job.latest_screening_run_id ? (
+                      <>
+                        <Link
+                          href={`/runs/${job.latest_screening_run_id}`}
+                          className="font-mono text-xs text-ink no-underline hover:text-stamp hover:underline"
+                        >
+                          {job.latest_screening_run_id}
+                        </Link>
+                        <div className="font-mono text-2xs text-ink-3">
+                          {job.created_at}
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-xs text-ink-3">
+                        No run recorded
+                      </span>
+                    )}
+                  </Td>
+                  <Td align="right">
+                    <Button
+                      variant={draft ? "ruled" : "stamp"}
+                      disabled={draft}
+                      icon="run"
+                      title={
+                        draft
+                          ? "The rubric must be approved and frozen before a run can start"
+                          : undefined
+                      }
+                    >
+                      Start screening
+                    </Button>
+                  </Td>
+                </Tr>
+              );
+            })
+          )}
         </tbody>
       </Ledger>
 
@@ -165,7 +220,7 @@ export default function JobsPage() {
           freezes it and stamps a version onto every score it produces.
         </p>
         <span className="stamp-label shrink-0">
-          {JOBS.length} of {JOBS.length}
+          {filteredJobs.length} of {jobs.length}
         </span>
       </div>
     </>

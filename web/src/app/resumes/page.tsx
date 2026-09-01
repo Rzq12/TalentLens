@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { Button } from "@/components/ui/Button";
 import { Seal, SealBlock } from "@/components/ui/Seal";
@@ -11,19 +14,37 @@ import {
   Tr,
   GutterCell,
 } from "@/components/ledger/Ledger";
-import { RESUMES } from "@/lib/demo";
 import { Dropzone } from "@/components/intake/Dropzone";
 import { ExtractedProfile } from "@/components/intake/ExtractedProfile";
-
-export const metadata = { title: "Resume intake — TalentLens" };
-
-const TALLY = [
-  { label: "Accessioned", value: "1,248", tone: "neutral" as const },
-  { label: "In queue", value: "12", tone: "pending" as const },
-  { label: "Failed to parse", value: "3", tone: "broken" as const },
-];
+import { useResumes } from "@/lib/hooks";
 
 export default function ResumesPage() {
+  const { data: resumesData, loading, error } = useResumes(50);
+  const resumes = resumesData ?? [];
+
+  const accessioned = resumes.filter((r) => r.parse_status === "ok").length;
+  const failed = resumes.filter((r) => r.parse_status === "failed").length;
+  const processing = resumes.filter(
+    (r) => r.parse_status !== "ok" && r.parse_status !== "failed",
+  ).length;
+
+  const TALLY = [
+    { label: "Accessioned", value: accessioned, tone: "neutral" as const },
+    { label: "In queue", value: processing, tone: "pending" as const },
+    { label: "Failed to parse", value: failed, tone: "broken" as const },
+  ];
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <p className="text-lg font-medium text-seal">Error loading resumes</p>
+          <p className="text-sm text-ink-3 mt-2">{error.message}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <Masthead
@@ -31,15 +52,15 @@ export default function ResumesPage() {
         meta={
           <>
             <MetaFact label="Register" value="Accessions" />
-            <MetaFact label="Today" value="6 documents" mono />
+            <MetaFact label="Total" value={`${resumes.length} documents`} mono />
           </>
         }
         seal={
           <SealBlock
-            tone="pending"
+            tone={processing > 0 ? "pending" : "intact"}
             label="Queue"
-            value="12 awaiting"
-            meta="ETA ~3m"
+            value={processing > 0 ? `${processing} awaiting` : "All processed"}
+            meta={processing > 0 ? "Processing..." : "Up to date"}
           />
         }
         actions={
@@ -68,7 +89,7 @@ export default function ResumesPage() {
                     : "text-ink"
               }`}
             >
-              {t.value}
+              {loading ? "—" : t.value}
             </span>
           </div>
         ))}
@@ -93,77 +114,97 @@ export default function ResumesPage() {
           <Th width="11rem">Accessioned</Th>
         </LedgerHead>
         <tbody>
-          {RESUMES.map((r, i) => {
-            const failed = r.status === "failed";
-            return (
-              <Tr key={r.id} className={failed ? "bg-seal-wash/40" : ""}>
-                <GutterCell
-                  ordinal={i + 1}
-                  first={i === 0}
-                  last={i === RESUMES.length - 1}
-                  broken={failed}
-                  live={r.status === "processing"}
-                />
-                <Td>
-                  <div className="font-medium text-ink">
-                    {failed ? (
-                      <span className="text-ink-3">
-                        Unresolved — name not extracted
-                      </span>
+          {loading ? (
+            <Tr>
+              <Td colSpan={7} className="text-center py-8">
+                <div className="text-ink-3">Loading resumes...</div>
+              </Td>
+            </Tr>
+          ) : resumes.length === 0 ? (
+            <Tr>
+              <Td colSpan={7} className="text-center py-8">
+                <div className="text-ink-3">No resumes accessioned yet</div>
+              </Td>
+            </Tr>
+          ) : (
+            resumes.map((r, i) => {
+              const isFailed = r.parse_status === "failed";
+              const isLowYield = r.parse_status === "low_yield";
+              const parseSealTone = isFailed
+                ? "broken"
+                : isLowYield
+                  ? "pending"
+                  : "intact";
+              const parseLabel = isFailed
+                ? "Failed"
+                : isLowYield
+                  ? "Low yield"
+                  : "Parsed";
+
+              return (
+                <Tr
+                  key={r.document_id}
+                  className={isFailed ? "bg-seal-wash/40" : ""}
+                >
+                  <GutterCell
+                    ordinal={i + 1}
+                    first={i === 0}
+                    last={i === resumes.length - 1}
+                    broken={isFailed}
+                  />
+                  <Td>
+                    <div className="font-medium text-ink">
+                      {isFailed ? (
+                        <span className="text-ink-3">
+                          Unresolved — name not extracted
+                        </span>
+                      ) : (
+                        r.filename.replace(/\.[^/.]+$/, "")
+                      )}
+                    </div>
+                    <div className="truncate font-mono text-2xs text-ink-3">
+                      {r.filename} · {r.document_id}
+                    </div>
+                  </Td>
+                  <Td>
+                    <Seal tone={parseSealTone}>{parseLabel}</Seal>
+                  </Td>
+                  <Td align="center">
+                    {r.needs_ocr ? (
+                      <Seal tone="pending" glyph="sheet">
+                        Fallback used
+                      </Seal>
                     ) : (
-                      r.candidate
+                      <span className="font-mono text-2xs text-ink-3">
+                        Not needed
+                      </span>
                     )}
-                  </div>
-                  <div className="truncate font-mono text-2xs text-ink-3">
-                    {r.filename} · {r.id}
-                  </div>
-                  {r.note ? (
-                    <p className="mt-1 flex items-start gap-1.5 text-xs text-seal">
-                      <Icon name="alert" size={12} className="mt-[3px]" />
-                      {r.note}
-                    </p>
-                  ) : null}
-                </Td>
-                <Td>
-                  <Seal
-                    tone={
-                      r.status === "parsed"
-                        ? "intact"
-                        : r.status === "processing"
-                          ? "pending"
-                          : "broken"
-                    }
-                  >
-                    {r.status === "parsed"
-                      ? "Parsed"
-                      : r.status === "processing"
-                        ? "Processing"
-                        : "Failed"}
-                  </Seal>
-                </Td>
-                <Td align="center">
-                  {r.ocr ? (
-                    <Seal tone="pending" glyph="sheet">
-                      Fallback used
+                  </Td>
+                  <Td>
+                    <Seal
+                      tone={
+                        r.injection_risk_score != null &&
+                        r.injection_risk_score < 0.3
+                          ? "intact"
+                          : "neutral"
+                      }
+                    >
+                      {r.injection_risk_score != null &&
+                      r.injection_risk_score < 0.3
+                        ? "Clean"
+                        : "Unverified"}
                     </Seal>
-                  ) : (
-                    <span className="font-mono text-2xs text-ink-3">
-                      Not needed
-                    </span>
-                  )}
-                </Td>
-                <Td>
-                  <Seal tone={r.sanitized === "clean" ? "intact" : "neutral"}>
-                    {r.sanitized === "clean" ? "Clean" : "Unverified"}
-                  </Seal>
-                </Td>
-                <Td align="right" className="font-mono tabular-nums text-ink-2">
-                  {r.pages}
-                </Td>
-                <Td className="font-mono text-2xs text-ink-3">{r.uploaded}</Td>
-              </Tr>
-            );
-          })}
+                  </Td>
+                  <Td align="right" className="font-mono tabular-nums text-ink-2">
+                    {r.page_count}
+                  </Td>
+                  <Td className="font-mono text-2xs text-ink-3">
+                    {new Date(r.created_at).toLocaleString()}
+                  </Td>
+                </Tr>
+              );
+            })
+          )}
         </tbody>
       </Ledger>
 

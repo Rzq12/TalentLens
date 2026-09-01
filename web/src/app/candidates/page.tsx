@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { Seal, SealBlock } from "@/components/ui/Seal";
@@ -11,11 +14,60 @@ import {
   Tr,
   GutterCell,
 } from "@/components/ledger/Ledger";
-import { CANDIDATES } from "@/lib/demo";
+import { useCandidates } from "@/lib/hooks";
+import type { CandidateAssessment } from "@/lib/api";
 
-export const metadata = { title: "Candidates — TalentLens" };
+function recommendationLabel(rec: CandidateAssessment["recommendation"]) {
+  switch (rec) {
+    case "strong_advance":
+      return "Strong match";
+    case "advance":
+      return "Match";
+    case "hold":
+      return "Needs review";
+    default:
+      return "Not a fit";
+  }
+}
+
+function recommendationTone(
+  rec: CandidateAssessment["recommendation"],
+): "intact" | "neutral" | "broken" {
+  switch (rec) {
+    case "strong_advance":
+      return "intact";
+    case "advance":
+      return "neutral";
+    default:
+      return "broken";
+  }
+}
 
 export default function CandidatesPage() {
+  const { data: candidates = [], loading, error } = useCandidates(undefined, 50);
+  const [decisionFilter, setDecisionFilter] = useState("all");
+  const [custodyFilter, setCustodyFilter] = useState("all");
+
+  const filtered = candidates.filter((c) => {
+    if (decisionFilter !== "all" && c.decision !== decisionFilter) return false;
+    if (custodyFilter === "Unbroken" && c.overridden) return false;
+    if (custodyFilter === "Seal broken" && !c.overridden) return false;
+    return true;
+  });
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <p className="text-lg font-medium text-seal">
+            Error loading candidates
+          </p>
+          <p className="text-sm text-ink-3 mt-2">{error.message}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <Masthead
@@ -23,7 +75,7 @@ export default function CandidatesPage() {
         meta={
           <>
             <MetaFact label="Register" value="Assessments" />
-            <MetaFact label="Entries" value={CANDIDATES.length} mono />
+            <MetaFact label="Entries" value={candidates.length} mono />
           </>
         }
         seal={
@@ -45,13 +97,23 @@ export default function CandidatesPage() {
           icon="search"
           className="min-w-[16rem] flex-1"
         />
-        <SelectField label="Decision" defaultValue="all" className="w-44">
+        <SelectField
+          label="Decision"
+          defaultValue="all"
+          className="w-44"
+          onChange={(e) => setDecisionFilter(e.currentTarget.value)}
+        >
           <option value="all">Any decision</option>
-          <option>Advance</option>
-          <option>Hold</option>
-          <option>Awaiting review</option>
+          <option value="advance">Advance</option>
+          <option value="hold">Hold</option>
+          <option value="reject">Reject</option>
         </SelectField>
-        <SelectField label="Custody" defaultValue="all" className="w-44">
+        <SelectField
+          label="Custody"
+          defaultValue="all"
+          className="w-44"
+          onChange={(e) => setCustodyFilter(e.currentTarget.value)}
+        >
           <option value="all">Any state</option>
           <option>Unbroken</option>
           <option>Seal broken</option>
@@ -75,51 +137,63 @@ export default function CandidatesPage() {
           </Th>
         </LedgerHead>
         <tbody>
-          {CANDIDATES.map((c, i) => (
-            <Tr key={c.id}>
-              <GutterCell
-                ordinal={i + 1}
-                first={i === 0}
-                last={i === CANDIDATES.length - 1}
-                broken={c.overridden}
-              />
-              <Td>
-                <Link
-                  href={`/candidates/${c.id}`}
-                  className="font-medium text-ink no-underline hover:text-stamp hover:underline"
-                >
-                  {c.name}
-                </Link>
-                <div className="font-mono text-2xs text-ink-3">
-                  {c.id} · {c.resumeId}
-                </div>
-              </Td>
-              <Td className="text-ink-2">Senior Frontend Engineer</Td>
-              <Td align="right" className="font-mono tabular-nums text-ink">
-                {c.score}
-              </Td>
-              <Td>
-                <Seal
-                  tone={c.recommendation === "strong" ? "intact" : "neutral"}
-                >
-                  {c.recommendation === "strong" ? "Strong match" : "Match"}
-                </Seal>
-              </Td>
-              <Td>
-                {c.decision === "pending" ? (
-                  <Seal tone="pending">Awaiting review</Seal>
-                ) : (
-                  <Seal tone={c.overridden ? "broken" : "intact"}>
-                    {c.decision === "advance" ? "Advance" : "Hold"}
-                    {c.overridden ? " · overridden" : ""}
-                  </Seal>
-                )}
-              </Td>
-              <Td align="right" className="font-mono text-2xs text-ink-3">
-                {c.decidedBy ?? "—"}
+          {loading ? (
+            <Tr>
+              <Td colSpan={7} className="text-center py-8">
+                <div className="text-ink-3">Loading candidates...</div>
               </Td>
             </Tr>
-          ))}
+          ) : filtered.length === 0 ? (
+            <Tr>
+              <Td colSpan={7} className="text-center py-8">
+                <div className="text-ink-3">No candidates found</div>
+              </Td>
+            </Tr>
+          ) : (
+            filtered.map((c, i) => (
+              <Tr key={c.candidate_id}>
+                <GutterCell
+                  ordinal={i + 1}
+                  first={i === 0}
+                  last={i === filtered.length - 1}
+                  broken={c.overridden}
+                />
+                <Td>
+                  <Link
+                    href={`/candidates/${c.candidate_id}`}
+                    className="font-medium text-ink no-underline hover:text-stamp hover:underline"
+                  >
+                    {c.candidate_id}
+                  </Link>
+                  <div className="font-mono text-2xs text-ink-3">
+                    {c.candidate_id} · {c.document_id}
+                  </div>
+                </Td>
+                <Td className="text-ink-2">{c.run_id}</Td>
+                <Td align="right" className="font-mono tabular-nums text-ink">
+                  {Math.round(c.score * 100)}
+                </Td>
+                <Td>
+                  <Seal tone={recommendationTone(c.recommendation)}>
+                    {recommendationLabel(c.recommendation)}
+                  </Seal>
+                </Td>
+                <Td>
+                  {!c.decision ? (
+                    <Seal tone="pending">Awaiting review</Seal>
+                  ) : (
+                    <Seal tone={c.overridden ? "broken" : "intact"}>
+                      {c.decision.charAt(0).toUpperCase() + c.decision.slice(1)}
+                      {c.overridden ? " · overridden" : ""}
+                    </Seal>
+                  )}
+                </Td>
+                <Td align="right" className="font-mono text-2xs text-ink-3">
+                  {c.decided_by ?? "—"}
+                </Td>
+              </Tr>
+            ))
+          )}
         </tbody>
       </Ledger>
     </>
