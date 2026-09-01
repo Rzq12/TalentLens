@@ -140,9 +140,7 @@ export default function RunsPage() {
                   {r.processed} / {r.total_resumes}
                 </Td>
                 <Td className="font-mono text-2xs text-ink-3">
-                  {r.started_at
-                    ? new Date(r.started_at).toLocaleString()
-                    : "—"}
+                  {r.started_at ? new Date(r.started_at).toLocaleString() : "—"}
                 </Td>
               </Tr>
             ))

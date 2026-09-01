@@ -88,7 +88,9 @@ function useQuery<T>(
  * TItem is the type of each individual item in the list.
  */
 function useInfiniteQuery<TItem>(
-  fetchFn: (cursor?: string) => Promise<{ items: TItem[]; next_cursor?: string | null }>,
+  fetchFn: (
+    cursor?: string,
+  ) => Promise<{ items: TItem[]; next_cursor?: string | null }>,
   deps: React.DependencyList = [],
 ): UseInfiniteState<TItem> {
   const [data, setData] = useState<TItem[]>([]);
@@ -130,7 +132,7 @@ function useInfiniteQuery<TItem>(
     return () => {
       mounted.current = false;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
   const loadMore = useCallback(async () => {
@@ -165,7 +167,6 @@ function useInfiniteQuery<TItem>(
     isLoadingMore,
   };
 }
-
 
 // ============================================================================
 // Jobs Hooks
@@ -418,11 +419,7 @@ export function useOverrideDecision() {
   const [error, setError] = useState<Error | null>(null);
 
   const override = useCallback(
-    async (
-      candidateId: string,
-      _decision: string,
-      reason: string,
-    ) => {
+    async (candidateId: string, _decision: string, reason: string) => {
       // The backend override endpoint is per-verdict, not per-candidate.
       // For now we record a governance decision against the score_id.
       try {
@@ -483,7 +480,6 @@ export function useGovernanceSummary() {
       : null,
   };
 }
-
 
 // ============================================================================
 // Search Hooks

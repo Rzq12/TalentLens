@@ -52,7 +52,11 @@ export default function ResumesPage() {
         meta={
           <>
             <MetaFact label="Register" value="Accessions" />
-            <MetaFact label="Total" value={`${resumes.length} documents`} mono />
+            <MetaFact
+              label="Total"
+              value={`${resumes.length} documents`}
+              mono
+            />
           </>
         }
         seal={
@@ -195,7 +199,10 @@ export default function ResumesPage() {
                         : "Unverified"}
                     </Seal>
                   </Td>
-                  <Td align="right" className="font-mono tabular-nums text-ink-2">
+                  <Td
+                    align="right"
+                    className="font-mono tabular-nums text-ink-2"
+                  >
                     {r.page_count}
                   </Td>
                   <Td className="font-mono text-2xs text-ink-3">

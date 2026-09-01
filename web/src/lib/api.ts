@@ -328,9 +328,7 @@ export const screeningAPI = {
     ),
 
   /** Get ranked results for a run (populated once status=completed|running) */
-  results: (
-    runId: string,
-  ) =>
+  results: (runId: string) =>
     apiFetch<RunResultsResponse>(`/screening/runs/${runId}/results`),
 };
 
@@ -385,7 +383,11 @@ export const candidatesAPI = {
    */
   list: async (runId?: string, _limit = 50) => {
     if (!runId) {
-      return { items: [], count: 0, next_cursor: null } as CandidateListResponse;
+      return {
+        items: [],
+        count: 0,
+        next_cursor: null,
+      } as CandidateListResponse;
     }
     const res = await apiFetch<RunResultsResponse>(
       `/screening/runs/${runId}/results`,
@@ -406,7 +408,11 @@ export const candidatesAPI = {
       resume_id: r.candidate_id,
       document_id: r.candidate_id,
     }));
-    return { items, count: items.length, next_cursor: null } as CandidateListResponse;
+    return {
+      items,
+      count: items.length,
+      next_cursor: null,
+    } as CandidateListResponse;
   },
 
   get: (candidateId: string) =>
@@ -478,9 +484,11 @@ export const governanceAPI = {
    * Returns validity + count of checked events.
    */
   verifyChain: () =>
-    apiFetch<{ valid: boolean; checked_events: number; first_invalid_event_id: string | null }>(
-      "/governance/audit/verify",
-    ),
+    apiFetch<{
+      valid: boolean;
+      checked_events: number;
+      first_invalid_event_id: string | null;
+    }>("/governance/audit/verify"),
 
   recordDecision: (
     scoreId: string,

@@ -37,11 +37,7 @@ export default function RubricsPage() {
         title="Screening rubric"
         meta={
           <>
-            <MetaFact
-              label="Rubric"
-              value={rubric?.rubric_id ?? "—"}
-              mono
-            />
+            <MetaFact label="Rubric" value={rubric?.rubric_id ?? "—"} mono />
             <MetaFact
               label="Version"
               value={
@@ -51,7 +47,11 @@ export default function RubricsPage() {
               }
               mono
             />
-            <MetaFact label="Status" value={loading ? "Loading…" : (rubric?.status ?? "—")} mono />
+            <MetaFact
+              label="Status"
+              value={loading ? "Loading…" : (rubric?.status ?? "—")}
+              mono
+            />
           </>
         }
         seal={
