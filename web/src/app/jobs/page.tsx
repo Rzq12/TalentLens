@@ -15,11 +15,19 @@ import {
   Tr,
   GutterCell,
 } from "@/components/ledger/Ledger";
-import { useCreateJob, useJobs } from "@/lib/hooks";
+import {
+  useCreateJob,
+  useJobs,
+  useRubrics,
+  useStartScreening,
+} from "@/lib/hooks";
 
 export default function JobsPage() {
   const { data: jobsData, loading, error } = useJobs(50);
   const jobs = jobsData ?? [];
+  const { data: rubricsData } = useRubrics(undefined, 200);
+  const rubrics = rubricsData ?? [];
+  const { start, loading: starting } = useStartScreening();
   const [filter, setFilter] = useState({ department: "all", rubric: "all" });
   const [openForm, setOpenForm] = useState(false);
   const [form, setForm] = useState({
@@ -43,6 +51,11 @@ export default function JobsPage() {
     });
     setOpenForm(false);
     window.location.reload();
+  };
+
+  const startRun = async (jobId: string) => {
+    const result = await start(jobId);
+    window.location.href = `/runs/${result.run_id}`;
   };
 
   if (error) {
@@ -90,82 +103,94 @@ export default function JobsPage() {
           </Button>
         }
       />
-        {openForm ? (
-          <div className="fixed inset-0 z-40 flex items-start justify-center bg-ink/40 px-4 py-8">
-            <form
-              onSubmit={submitJob}
-              className="w-full max-w-2xl border-2 border-rule-section bg-leaf p-5 shadow-lg md:p-8"
-            >
-              <div className="flex items-start justify-between gap-4 border-b border-rule-entry pb-4">
-                <div>
-                  <p className="stamp-label">New position</p>
-                  <h2 className="mt-1 text-2xl font-semibold track-tight text-ink">
-                    Open a position
-                  </h2>
-                </div>
-                <Button
-                  variant="quiet"
-                  icon="cross"
-                  aria-label="Close position form"
-                  type="button"
-                  onClick={() => setOpenForm(false)}
-                />
+      {openForm ? (
+        <div className="fixed inset-0 z-40 flex items-start justify-center bg-ink/40 px-4 py-8">
+          <form
+            onSubmit={submitJob}
+            className="w-full max-w-2xl border-2 border-rule-section bg-leaf p-5 shadow-lg md:p-8"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-rule-entry pb-4">
+              <div>
+                <p className="stamp-label">New position</p>
+                <h2 className="mt-1 text-2xl font-semibold track-tight text-ink">
+                  Open a position
+                </h2>
               </div>
-              <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                <TextField
-                  label="Title"
+              <Button
+                variant="quiet"
+                icon="cross"
+                aria-label="Close position form"
+                type="button"
+                onClick={() => setOpenForm(false)}
+              />
+            </div>
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <TextField
+                label="Title"
+                required
+                value={form.title}
+                onChange={(event) =>
+                  setForm({ ...form, title: event.target.value })
+                }
+              />
+              <TextField
+                label="Department"
+                value={form.department}
+                onChange={(event) =>
+                  setForm({ ...form, department: event.target.value })
+                }
+              />
+              <TextField
+                label="Location"
+                value={form.location}
+                onChange={(event) =>
+                  setForm({ ...form, location: event.target.value })
+                }
+              />
+              <TextField
+                label="Employment type"
+                value={form.employment_type}
+                onChange={(event) =>
+                  setForm({ ...form, employment_type: event.target.value })
+                }
+              />
+              <TextField
+                label="Seniority"
+                value={form.seniority}
+                onChange={(event) =>
+                  setForm({ ...form, seniority: event.target.value })
+                }
+              />
+              <label className="sm:col-span-2">
+                <span className="stamp-label">Job description</span>
+                <textarea
                   required
-                  value={form.title}
-                  onChange={(event) => setForm({ ...form, title: event.target.value })}
+                  value={form.description_raw}
+                  onChange={(event) =>
+                    setForm({ ...form, description_raw: event.target.value })
+                  }
+                  className="mt-1 min-h-40 w-full border border-rule-entry bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-stamp"
                 />
-                <TextField
-                  label="Department"
-                  value={form.department}
-                  onChange={(event) => setForm({ ...form, department: event.target.value })}
-                />
-                <TextField
-                  label="Location"
-                  value={form.location}
-                  onChange={(event) => setForm({ ...form, location: event.target.value })}
-                />
-                <TextField
-                  label="Employment type"
-                  value={form.employment_type}
-                  onChange={(event) => setForm({ ...form, employment_type: event.target.value })}
-                />
-                <TextField
-                  label="Seniority"
-                  value={form.seniority}
-                  onChange={(event) => setForm({ ...form, seniority: event.target.value })}
-                />
-                <label className="sm:col-span-2">
-                  <span className="stamp-label">Job description</span>
-                  <textarea
-                    required
-                    value={form.description_raw}
-                    onChange={(event) => setForm({ ...form, description_raw: event.target.value })}
-                    className="mt-1 min-h-40 w-full border border-rule-entry bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-stamp"
-                  />
-                </label>
-              </div>
-              {createError ? (
-                <p className="mt-4 text-sm text-seal">{createError.message}</p>
-              ) : null}
-              <div className="mt-6 flex justify-end gap-2 border-t border-rule-entry pt-4">
-                <Button
-                  variant="quiet"
-                  type="button"
-                  onClick={() => setOpenForm(false)}
-                >
-                  Cancel
-                </Button>
-                <Button variant="stamp" type="submit" loading={creating}>
-                  Create position
-                </Button>
-              </div>
-            </form>
-          </div>
-        ) : null}
+              </label>
+            </div>
+            {createError ? (
+              <p className="mt-4 text-sm text-seal">{createError.message}</p>
+            ) : null}
+            <div className="mt-6 flex justify-end gap-2 border-t border-rule-entry pt-4">
+              <Button
+                variant="quiet"
+                type="button"
+                onClick={() => setOpenForm(false)}
+              >
+                Cancel
+              </Button>
+              <Button variant="stamp" type="submit" loading={creating}>
+                Create position
+              </Button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       <Toolbar>
         <TextField
@@ -237,7 +262,8 @@ export default function JobsPage() {
             </Tr>
           ) : (
             filteredJobs.map((job, i) => {
-              const draft = job.status === "draft";
+              const rubric = rubrics.find((item) => item.job_id === job.job_id);
+              const draft = rubric?.status !== "approved";
               return (
                 <Tr key={job.job_id}>
                   <GutterCell
@@ -248,7 +274,11 @@ export default function JobsPage() {
                   />
                   <Td>
                     <Link
-                      href={`/runs/${job.latest_screening_run_id ?? "SR-294"}`}
+                      href={
+                        job.latest_screening_run_id
+                          ? `/runs/${job.latest_screening_run_id}`
+                          : `/rubrics?jobId=${job.job_id}`
+                      }
                       className="font-medium text-ink no-underline hover:text-stamp hover:underline"
                     >
                       {job.title}
@@ -288,15 +318,20 @@ export default function JobsPage() {
                   <Td align="right">
                     <Button
                       variant={draft ? "ruled" : "stamp"}
-                      disabled={draft}
-                      icon="run"
+                      disabled={starting}
+                      icon={draft ? "sheet" : "run"}
+                      onClick={() =>
+                        draft
+                          ? (window.location.href = `/rubrics?jobId=${job.job_id}`)
+                          : startRun(job.job_id)
+                      }
                       title={
                         draft
-                          ? "The rubric must be approved and frozen before a run can start"
+                          ? "Create and approve a rubric before starting a run"
                           : undefined
                       }
                     >
-                      Start screening
+                      {draft ? "Create rubric" : "Start screening"}
                     </Button>
                   </Td>
                 </Tr>

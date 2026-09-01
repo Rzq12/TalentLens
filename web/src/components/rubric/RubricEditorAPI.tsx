@@ -12,7 +12,7 @@ import {
   Td,
   GutterCell,
 } from "@/components/ledger/Ledger";
-import { useApproveRubric } from "@/lib/hooks";
+import { useApproveRubric, useCreateRubric } from "@/lib/hooks";
 import type { RubricResponse, RequirementRow } from "@/lib/api";
 
 interface Props {
@@ -33,8 +33,30 @@ export function RubricEditorAPI({ rubric, loading, jobId }: Props) {
   );
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [freezing, setFreezing] = useState(false);
+  const [newRequirement, setNewRequirement] = useState("");
   const liveRegion = useRef<HTMLParagraphElement>(null);
-  const { approve, loading: approving, error: approveError } = useApproveRubric();
+  const {
+    approve,
+    loading: approving,
+    error: approveError,
+  } = useApproveRubric();
+  const { create, loading: creating, error: createError } = useCreateRubric();
+
+  const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!jobId || !newRequirement.trim()) return;
+    await create({
+      job_id: jobId,
+      requirements: [
+        {
+          label: newRequirement.trim(),
+          must_have: false,
+          weight: 100,
+        },
+      ],
+    });
+    window.location.reload();
+  };
 
   // Keep rows in sync when rubric loads
   useMemo(() => {
@@ -95,6 +117,29 @@ export function RubricEditorAPI({ rubric, loading, jobId }: Props) {
             ? "No rubric exists for this job. Create one to start screening."
             : "Select a job to view its rubric, or navigate here from a job page."}
         </p>
+        {jobId ? (
+          <form
+            onSubmit={handleCreate}
+            className="mx-auto mt-6 flex max-w-xl flex-col gap-3 text-left"
+          >
+            <label>
+              <span className="stamp-label">First requirement</span>
+              <textarea
+                required
+                value={newRequirement}
+                onChange={(event) => setNewRequirement(event.target.value)}
+                placeholder="Describe the requirement to evaluate"
+                className="mt-1 min-h-28 w-full border border-rule-entry bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-stamp"
+              />
+            </label>
+            {createError ? (
+              <p className="text-sm text-seal">{createError.message}</p>
+            ) : null}
+            <Button variant="stamp" type="submit" loading={creating}>
+              Create draft rubric
+            </Button>
+          </form>
+        ) : null}
       </div>
     );
   }
@@ -107,9 +152,7 @@ export function RubricEditorAPI({ rubric, loading, jobId }: Props) {
           defaultValue="current"
           className="w-64"
         >
-          <option value="current">
-            {rubric?.job_id ?? "Current rubric"}
-          </option>
+          <option value="current">{rubric?.job_id ?? "Current rubric"}</option>
         </SelectField>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="ruled" icon="sheet">
