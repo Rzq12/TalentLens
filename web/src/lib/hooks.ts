@@ -468,6 +468,10 @@ export function useGovernanceVerify() {
   return useQuery(() => API.governance.verifyChain(), []);
 }
 
+export function useCurrentPrincipal() {
+  return useQuery(() => API.auth.me(), []);
+}
+
 /**
  * Kept for backward-compat — maps governance verify result into a
  * summary-shaped object so existing page code keeps working.

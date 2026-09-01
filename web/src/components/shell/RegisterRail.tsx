@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon, type IconName } from "@/components/Icon";
 import { Mark } from "@/components/shell/Mark";
+import { useCurrentPrincipal } from "@/lib/hooks";
 
 const ENTRIES: {
   href: string;
@@ -21,6 +22,7 @@ const ENTRIES: {
 
 export function RegisterRail() {
   const pathname = usePathname();
+  const { data: principal } = useCurrentPrincipal();
 
   return (
     <nav
@@ -82,17 +84,17 @@ export function RegisterRail() {
         <div className="hidden xl:block">
           <div className="stamp-label">Custodian</div>
           <div className="mt-0.5 truncate text-sm font-medium text-ink">
-            A. Wijaya
+            {principal?.user_id ?? "Authenticated user"}
           </div>
           <div className="truncate font-mono text-2xs text-ink-3">
-            recruiter · demo tenant
+            {principal?.roles.join(", ") ?? "Backend identity"}
           </div>
         </div>
         <div
           aria-hidden="true"
           className="flex h-8 w-8 items-center justify-center border border-rule-entry bg-leaf font-mono text-xs text-ink-2 xl:hidden"
         >
-          AW
+          {principal?.user_id?.slice(0, 2).toUpperCase() ?? "--"}
         </div>
       </div>
     </nav>

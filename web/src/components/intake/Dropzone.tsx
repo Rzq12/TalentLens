@@ -8,17 +8,29 @@ import { Button } from "@/components/ui/Button";
  * Accession bay. A ruled deposit frame, not a rounded dashed card — the
  * hover state deepens the rule and stamps the frame rather than tinting it.
  */
-export function Dropzone() {
+export function Dropzone({
+  onUpload,
+  uploading = false,
+}: {
+  onUpload: (files: File[], candidateName: string) => Promise<void>;
+  uploading?: boolean;
+}) {
   const [over, setOver] = useState(false);
-  const [queued, setQueued] = useState<string[]>([]);
+  const [candidateName, setCandidateName] = useState("");
+  const [queued, setQueued] = useState<File[]>([]);
   const input = useRef<HTMLInputElement>(null);
 
   const accept = useCallback((files: FileList | null) => {
     if (!files?.length) return;
-    setQueued((prev) =>
-      [...Array.from(files).map((f) => f.name), ...prev].slice(0, 4),
-    );
+    setQueued((prev) => [...Array.from(files), ...prev].slice(0, 4));
   }, []);
+
+  const submit = async () => {
+    if (!queued.length || !candidateName.trim()) return;
+    await onUpload(queued, candidateName.trim());
+    setQueued([]);
+    setCandidateName("");
+  };
 
   return (
     <section className="border-b border-rule-entry bg-leaf px-5 py-4 md:px-8">
@@ -58,6 +70,13 @@ export function Dropzone() {
         </div>
         <div className="flex items-center gap-2">
           <input
+            value={candidateName}
+            onChange={(event) => setCandidateName(event.currentTarget.value)}
+            placeholder="Candidate name"
+            aria-label="Candidate name"
+            className="w-44 border border-rule-entry bg-leaf px-3 py-2 text-sm text-ink"
+          />
+          <input
             ref={input}
             type="file"
             multiple
@@ -76,10 +95,11 @@ export function Dropzone() {
       </div>
 
       {queued.length ? (
-        <ul className="mt-3 divide-y divide-rule-hair border border-rule-entry">
-          {queued.map((name, i) => (
+        <div className="mt-3 border border-rule-entry">
+          <ul className="divide-y divide-rule-hair">
+          {queued.map((file, i) => (
             <li
-              key={`${name}-${i}`}
+              key={`${file.name}-${file.lastModified}-${i}`}
               className="flex items-center gap-3 px-3 py-2"
             >
               <span className="font-mono text-2xs tabular-nums text-ink-3">
@@ -90,12 +110,24 @@ export function Dropzone() {
                 aria-hidden="true"
               />
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
-                {name}
+                {file.name}
               </span>
               <span className="stamp-label">Queued for accession</span>
             </li>
           ))}
-        </ul>
+          </ul>
+          <div className="flex items-center justify-between gap-3 border-t border-rule-entry px-3 py-2">
+            <span className="text-xs text-ink-2">Ready to send to accession</span>
+            <Button
+              variant="stamp"
+              icon="upload"
+              disabled={uploading || !candidateName.trim()}
+              onClick={submit}
+            >
+              {uploading ? "Uploading..." : "Upload documents"}
+            </Button>
+          </div>
+        </div>
       ) : null}
     </section>
   );

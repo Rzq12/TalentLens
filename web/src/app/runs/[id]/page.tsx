@@ -6,7 +6,7 @@ import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { Button } from "@/components/ui/Button";
 import { Seal, SealBlock } from "@/components/ui/Seal";
 import { Icon } from "@/components/Icon";
-import { SyntheticNotice, NeverRejectsNote } from "@/components/ui/Section";
+import { NeverRejectsNote } from "@/components/ui/Section";
 import {
   Ledger,
   LedgerHead,
@@ -98,7 +98,7 @@ export default function RankedAssessment({
             tone={overrides ? "pending" : "intact"}
             label="Chain of custody"
             value={overrides ? `${overrides} override` : "Chain intact"}
-            meta={`${candidates.length} entries · 0x9f8a…4b2c`}
+            meta={`${candidates.length} entries · backend status`}
           />
         }
         actions={
@@ -113,7 +113,6 @@ export default function RankedAssessment({
         }
       />
 
-      <SyntheticNotice />
 
       <div className="flex flex-wrap items-center justify-between gap-3 bg-leaf px-5 py-2.5 md:px-8">
         <NeverRejectsNote className="max-w-[76ch]" />

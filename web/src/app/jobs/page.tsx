@@ -8,7 +8,6 @@ import { Seal, SealBlock } from "@/components/ui/Seal";
 import { TextField, SelectField } from "@/components/ui/Field";
 import {
   Toolbar,
-  SyntheticNotice,
   NeverRejectsNote,
 } from "@/components/ui/Section";
 import {
@@ -55,7 +54,6 @@ export default function JobsPage() {
           <>
             <MetaFact label="Register" value="Positions" />
             <MetaFact label="Entries" value={filteredJobs.length} mono />
-            <MetaFact label="Tenant" value="demo" mono />
           </>
         }
         seal={
@@ -63,7 +61,7 @@ export default function JobsPage() {
             tone="intact"
             label="Register state"
             value="Chain intact"
-            meta="0x9f8a…4b2c"
+            meta="Verified by backend"
           />
         }
         actions={
@@ -73,7 +71,6 @@ export default function JobsPage() {
         }
       />
 
-      <SyntheticNotice />
 
       <Toolbar>
         <TextField

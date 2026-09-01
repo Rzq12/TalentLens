@@ -4,7 +4,6 @@ import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { Button } from "@/components/ui/Button";
 import { Seal, SealBlock } from "@/components/ui/Seal";
 import { Icon } from "@/components/Icon";
-import { SyntheticNotice } from "@/components/ui/Section";
 import {
   Ledger,
   LedgerHead,
@@ -22,11 +21,11 @@ export default function GovernancePage() {
   const systemEvents = gov?.system_events ?? [];
   const flagged = auditEntries.find((e) => e.overridden);
 
-  const headHash = gov?.chain_integrity?.head_hash ?? "0x9f8a…4b2c";
+  const headHash = gov?.chain_integrity?.head_hash ?? "";
   const verifiedAt = gov?.chain_integrity?.verified_at
     ? new Date(gov.chain_integrity.verified_at).toLocaleTimeString()
     : "—";
-  const chainValid = gov?.chain_integrity?.valid ?? true;
+  const chainValid = gov?.chain_integrity?.valid ?? false;
 
   if (error) {
     return (
@@ -61,7 +60,7 @@ export default function GovernancePage() {
             tone={chainValid ? "intact" : "broken"}
             label="Chain integrity"
             value={chainValid ? "Valid" : "Tampered"}
-            meta={headHash.slice(0, 14) + "…"}
+            meta={headHash ? `${headHash.slice(0, 14)}…` : "Awaiting verification"}
           />
         }
         actions={
@@ -71,7 +70,6 @@ export default function GovernancePage() {
         }
       />
 
-      <SyntheticNotice />
 
       {/* Integrity facts — a ruled strip of declared figures, not stat cards. */}
       <dl className="grid grid-cols-1 divide-y divide-rule-hair border-b-2 border-rule-section bg-leaf sm:grid-cols-2 sm:divide-x xl:grid-cols-4 xl:divide-y-0">

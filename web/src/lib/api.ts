@@ -546,15 +546,11 @@ export const candidatesAPI = {
    */
   list: async (runId?: string, _limit = 50) => {
     if (!runId) {
-      return {
-        items: [],
-        count: 0,
-        next_cursor: null,
-      } as CandidateListResponse;
+      return apiFetch<CandidateListResponse>("/candidates", {
+        query: { limit: _limit },
+      });
     }
-    const res = await apiFetch<RunResultsResponse>(
-      `/screening/runs/${runId}/results`,
-    );
+    const res = await apiFetch<RunResultsResponse>(`/screening/runs/${runId}/results`);
     // Map RunResult → CandidateAssessment shape
     const items: CandidateAssessment[] = (res.results ?? []).map((r) => ({
       score_id: r.score_id,

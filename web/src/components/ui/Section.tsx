@@ -1,5 +1,3 @@
-import { SYNTHETIC_NOTICE } from "@/lib/demo";
-import { Icon } from "@/components/Icon";
 
 /** A ruled form section. Declares its edge once — border or shadow, never both. */
 export function FormSection({
@@ -34,18 +32,6 @@ export function Toolbar({ children }: { children: React.ReactNode }) {
     <div className="flex flex-wrap items-end gap-3 border-b border-rule-entry bg-leaf px-5 py-3 md:px-8">
       {children}
     </div>
-  );
-}
-
-/** The mandatory provenance notice on any surface rendering demo records. */
-export function SyntheticNotice({ className = "" }: { className?: string }) {
-  return (
-    <p
-      className={`flex items-center gap-1.5 border-y border-dashed border-rule-entry bg-ochre-wash px-5 py-1.5 font-narrow text-2xs font-semibold uppercase track-stamp text-ochre md:px-8 ${className}`}
-    >
-      <Icon name="alert" size={12} />
-      {SYNTHETIC_NOTICE}
-    </p>
   );
 }
 

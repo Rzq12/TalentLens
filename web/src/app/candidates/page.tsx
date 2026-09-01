@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { Seal, SealBlock } from "@/components/ui/Seal";
 import { TextField, SelectField } from "@/components/ui/Field";
-import { Toolbar, SyntheticNotice } from "@/components/ui/Section";
+import { Toolbar } from "@/components/ui/Section";
 import {
   Ledger,
   LedgerHead,
@@ -83,12 +83,11 @@ export default function CandidatesPage() {
             tone="intact"
             label="Register state"
             value="Chain intact"
-            meta="0x9f8a…4b2c"
+            meta="Verified by backend"
           />
         }
       />
 
-      <SyntheticNotice />
 
       <Toolbar>
         <TextField

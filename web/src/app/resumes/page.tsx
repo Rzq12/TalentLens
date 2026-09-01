@@ -5,7 +5,6 @@ import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { Button } from "@/components/ui/Button";
 import { Seal, SealBlock } from "@/components/ui/Seal";
 import { Icon } from "@/components/Icon";
-import { SyntheticNotice } from "@/components/ui/Section";
 import {
   Ledger,
   LedgerHead,
@@ -15,12 +14,12 @@ import {
   GutterCell,
 } from "@/components/ledger/Ledger";
 import { Dropzone } from "@/components/intake/Dropzone";
-import { ExtractedProfile } from "@/components/intake/ExtractedProfile";
-import { useResumes } from "@/lib/hooks";
+import { useResumes, useUploadResume } from "@/lib/hooks";
 
 export default function ResumesPage() {
   const { data: resumesData, loading, error } = useResumes(50);
   const resumes = resumesData ?? [];
+  const { upload, loading: uploading } = useUploadResume();
 
   const accessioned = resumes.filter((r) => r.parse_status === "ok").length;
   const failed = resumes.filter((r) => r.parse_status === "failed").length;
@@ -74,7 +73,6 @@ export default function ResumesPage() {
         }
       />
 
-      <SyntheticNotice />
 
       {/* Accession tally — three declared facts on a ruled strip, not stat cards. */}
       <div className="grid grid-cols-1 divide-y divide-rule-hair border-b-2 border-rule-section bg-leaf sm:grid-cols-3 sm:divide-x sm:divide-y-0">
@@ -99,7 +97,14 @@ export default function ResumesPage() {
         ))}
       </div>
 
-      <Dropzone />
+      <Dropzone
+        uploading={uploading}
+        onUpload={async (files, candidateName) => {
+          for (const file of files) {
+            await upload(file, candidateName, undefined, false);
+          }
+        }}
+      />
 
       <Ledger className="border-t-2 border-rule-section bg-leaf">
         <LedgerHead>
@@ -215,7 +220,6 @@ export default function ResumesPage() {
         </tbody>
       </Ledger>
 
-      <ExtractedProfile />
     </>
   );
 }

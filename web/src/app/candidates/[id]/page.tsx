@@ -1,7 +1,6 @@
 import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { Button } from "@/components/ui/Button";
 import { SealBlock } from "@/components/ui/Seal";
-import { SyntheticNotice } from "@/components/ui/Section";
 import { ThreadProvider } from "@/components/thread/ThreadProvider";
 import { CandidateEvidenceClient } from "./CandidateEvidenceClient";
 
@@ -74,7 +73,6 @@ export default async function CandidateEvidence({
           </>
         }
       />
-      <SyntheticNotice />
       <CandidateEvidenceClient candidate={candidate} />
     </ThreadProvider>
   );

@@ -2,7 +2,6 @@
 
 import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { SealBlock } from "@/components/ui/Seal";
-import { SyntheticNotice } from "@/components/ui/Section";
 import { RunMonitorAPI } from "@/components/run/RunMonitorAPI";
 import { Button } from "@/components/ui/Button";
 import { useScreeningRuns } from "@/lib/hooks";
@@ -69,7 +68,6 @@ export default function RunsPage() {
           ) : undefined
         }
       />
-      <SyntheticNotice />
 
       {activeRun ? <RunMonitorAPI runId={activeRun.run_id} /> : null}
 

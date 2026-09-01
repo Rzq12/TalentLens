@@ -2,7 +2,6 @@
 
 import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { SealBlock } from "@/components/ui/Seal";
-import { SyntheticNotice } from "@/components/ui/Section";
 import { RubricEditorAPI } from "@/components/rubric/RubricEditorAPI";
 import { useRubrics } from "@/lib/hooks";
 import { useSearchParams } from "next/navigation";
@@ -63,7 +62,6 @@ export default function RubricsPage() {
           />
         }
       />
-      <SyntheticNotice />
       <RubricEditorAPI
         rubric={rubric ?? null}
         loading={loading}
