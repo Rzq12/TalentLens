@@ -158,9 +158,7 @@ export function EvidencePaneAPI({
                             label="Previous match"
                             icon="chevron-left"
                             disabled={cursor === 0}
-                            onClick={() =>
-                              setCursor((c) => Math.max(0, c - 1))
-                            }
+                            onClick={() => setCursor((c) => Math.max(0, c - 1))}
                           />
                           <span className="font-mono text-2xs tabular-nums text-ink-3">
                             {Math.min(cursor, f.evidence.length - 1) + 1} of{" "}

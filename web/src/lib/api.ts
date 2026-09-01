@@ -384,9 +384,11 @@ export const rubricsAPI = {
   },
 
   approve: async (rubricId: string) =>
-    mapRubric(await apiFetch<BackendRubricResponse>(`/rubrics/${rubricId}/approve`, {
-      method: "POST",
-    })),
+    mapRubric(
+      await apiFetch<BackendRubricResponse>(`/rubrics/${rubricId}/approve`, {
+        method: "POST",
+      }),
+    ),
 };
 
 // ============================================================================
@@ -478,8 +480,7 @@ export const screeningAPI = {
       await apiFetch<BackendScreeningRun>(`/screening/runs/${runId}`),
     ),
 
-  events: (runId: string) =>
-    `${API_BASE}/screening/runs/${runId}/events`,
+  events: (runId: string) => `${API_BASE}/screening/runs/${runId}/events`,
 
   /** Start a run — posted to /jobs/{jobId}/runs (screening router handles it) */
   start: (jobId: string) =>

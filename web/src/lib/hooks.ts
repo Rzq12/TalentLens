@@ -235,33 +235,34 @@ export function useUploadResume() {
       candidateEmail?: string,
       consentGranted = false,
     ) => {
-    try {
-      setLoading(true);
-      setError(null);
-      setProgress(0);
+      try {
+        setLoading(true);
+        setError(null);
+        setProgress(0);
 
-      // Simulate progress
-      const progressInterval = setInterval(() => {
-        setProgress((p) => Math.min(p + 10, 90));
-      }, 100);
+        // Simulate progress
+        const progressInterval = setInterval(() => {
+          setProgress((p) => Math.min(p + 10, 90));
+        }, 100);
 
-      const result = await API.resumes.upload(
-        file,
-        candidateName,
-        candidateEmail,
-        consentGranted,
-      );
-      clearInterval(progressInterval);
-      setProgress(100);
-      return result;
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      setError(error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-    }, [],
+        const result = await API.resumes.upload(
+          file,
+          candidateName,
+          candidateEmail,
+          consentGranted,
+        );
+        clearInterval(progressInterval);
+        setProgress(100);
+        return result;
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        setError(error);
+        throw error;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
   );
 
   return { upload, loading, error, progress };
