@@ -97,27 +97,29 @@ export function Dropzone({
       {queued.length ? (
         <div className="mt-3 border border-rule-entry">
           <ul className="divide-y divide-rule-hair">
-          {queued.map((file, i) => (
-            <li
-              key={`${file.name}-${file.lastModified}-${i}`}
-              className="flex items-center gap-3 px-3 py-2"
-            >
-              <span className="font-mono text-2xs tabular-nums text-ink-3">
-                {String(i + 1).padStart(2, "0")}
-              </span>
-              <span
-                className="developing h-2.5 w-2.5 shrink-0 bg-stamp"
-                aria-hidden="true"
-              />
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
-                {file.name}
-              </span>
-              <span className="stamp-label">Queued for accession</span>
-            </li>
-          ))}
+            {queued.map((file, i) => (
+              <li
+                key={`${file.name}-${file.lastModified}-${i}`}
+                className="flex items-center gap-3 px-3 py-2"
+              >
+                <span className="font-mono text-2xs tabular-nums text-ink-3">
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <span
+                  className="developing h-2.5 w-2.5 shrink-0 bg-stamp"
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
+                  {file.name}
+                </span>
+                <span className="stamp-label">Queued for accession</span>
+              </li>
+            ))}
           </ul>
           <div className="flex items-center justify-between gap-3 border-t border-rule-entry px-3 py-2">
-            <span className="text-xs text-ink-2">Ready to send to accession</span>
+            <span className="text-xs text-ink-2">
+              Ready to send to accession
+            </span>
             <Button
               variant="stamp"
               icon="upload"

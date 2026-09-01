@@ -1,4 +1,3 @@
-
 /** A ruled form section. Declares its edge once — border or shadow, never both. */
 export function FormSection({
   title,

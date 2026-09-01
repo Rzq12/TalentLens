@@ -15,16 +15,29 @@ export default function SettingsPage() {
         title="Settings"
         meta={
           <>
-            <MetaFact label="Tenant" value={principal?.tenant_id ?? "Loading"} mono />
-            <MetaFact label="User" value={principal?.user_id ?? "Loading"} mono />
-            <MetaFact label="Role" value={principal?.roles.join(", ") ?? "Loading"} />
+            <MetaFact
+              label="Tenant"
+              value={principal?.tenant_id ?? "Loading"}
+              mono
+            />
+            <MetaFact
+              label="User"
+              value={principal?.user_id ?? "Loading"}
+              mono
+            />
+            <MetaFact
+              label="Role"
+              value={principal?.roles.join(", ") ?? "Loading"}
+            />
           </>
         }
         seal={
           <SealBlock
             tone="intact"
             label="Retention"
-            value={loading ? "Loading" : error ? "Unavailable" : "Backend policy"}
+            value={
+              loading ? "Loading" : error ? "Unavailable" : "Backend policy"
+            }
             meta={error ? "Identity unavailable" : "Backend identity"}
           />
         }
@@ -34,7 +47,9 @@ export default function SettingsPage() {
         {loading ? (
           <p className="text-sm text-ink-3">Loading backend identity...</p>
         ) : error ? (
-          <p className="text-sm text-seal">Unable to load backend identity: {error.message}</p>
+          <p className="text-sm text-seal">
+            Unable to load backend identity: {error.message}
+          </p>
         ) : (
           <p className="text-sm text-ink-2">
             Account settings are managed by the backend identity provider.

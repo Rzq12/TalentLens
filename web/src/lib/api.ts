@@ -550,7 +550,9 @@ export const candidatesAPI = {
         query: { limit: _limit },
       });
     }
-    const res = await apiFetch<RunResultsResponse>(`/screening/runs/${runId}/results`);
+    const res = await apiFetch<RunResultsResponse>(
+      `/screening/runs/${runId}/results`,
+    );
     // Map RunResult → CandidateAssessment shape
     const items: CandidateAssessment[] = (res.results ?? []).map((r) => ({
       score_id: r.score_id,

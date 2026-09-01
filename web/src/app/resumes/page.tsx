@@ -73,7 +73,6 @@ export default function ResumesPage() {
         }
       />
 
-
       {/* Accession tally — three declared facts on a ruled strip, not stat cards. */}
       <div className="grid grid-cols-1 divide-y divide-rule-hair border-b-2 border-rule-section bg-leaf sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         {TALLY.map((t) => (
@@ -219,7 +218,6 @@ export default function ResumesPage() {
           )}
         </tbody>
       </Ledger>
-
     </>
   );
 }

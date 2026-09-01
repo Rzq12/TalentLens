@@ -77,11 +77,7 @@ export default function RankedAssessment({
         meta={
           <>
             <MetaFact label="Run" value={id.toUpperCase()} mono />
-            <MetaFact
-              label="Rubric"
-              value={run?.rubric_version ?? "—"}
-              mono
-            />
+            <MetaFact label="Rubric" value={run?.rubric_version ?? "—"} mono />
             <MetaFact
               label="Closed"
               value={
@@ -112,7 +108,6 @@ export default function RankedAssessment({
           </>
         }
       />
-
 
       <div className="flex flex-wrap items-center justify-between gap-3 bg-leaf px-5 py-2.5 md:px-8">
         <NeverRejectsNote className="max-w-[76ch]" />
@@ -199,7 +194,9 @@ export default function RankedAssessment({
                       <span className="font-mono text-base tabular-nums text-ink">
                         {Math.round(c.score * 100)}
                       </span>
-                      <span className="font-mono text-2xs text-ink-3">/100</span>
+                      <span className="font-mono text-2xs text-ink-3">
+                        /100
+                      </span>
                     </ThreadAnchor>
                   </Pullable>
                 </Td>

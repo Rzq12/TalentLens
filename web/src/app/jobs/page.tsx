@@ -6,10 +6,7 @@ import { Masthead, MetaFact } from "@/components/shell/Masthead";
 import { Button } from "@/components/ui/Button";
 import { Seal, SealBlock } from "@/components/ui/Seal";
 import { TextField, SelectField } from "@/components/ui/Field";
-import {
-  Toolbar,
-  NeverRejectsNote,
-} from "@/components/ui/Section";
+import { Toolbar, NeverRejectsNote } from "@/components/ui/Section";
 import {
   Ledger,
   LedgerHead,
@@ -70,7 +67,6 @@ export default function JobsPage() {
           </Button>
         }
       />
-
 
       <Toolbar>
         <TextField

@@ -60,7 +60,9 @@ export default function GovernancePage() {
             tone={chainValid ? "intact" : "broken"}
             label="Chain integrity"
             value={chainValid ? "Valid" : "Tampered"}
-            meta={headHash ? `${headHash.slice(0, 14)}…` : "Awaiting verification"}
+            meta={
+              headHash ? `${headHash.slice(0, 14)}…` : "Awaiting verification"
+            }
           />
         }
         actions={
@@ -69,7 +71,6 @@ export default function GovernancePage() {
           </Button>
         }
       />
-
 
       {/* Integrity facts — a ruled strip of declared figures, not stat cards. */}
       <dl className="grid grid-cols-1 divide-y divide-rule-hair border-b-2 border-rule-section bg-leaf sm:grid-cols-2 sm:divide-x xl:grid-cols-4 xl:divide-y-0">
@@ -196,7 +197,9 @@ export default function GovernancePage() {
                             className="shrink-0 text-seal"
                           />
                         ) : null}
-                        <span className={e.overridden ? "text-seal" : "text-ink"}>
+                        <span
+                          className={e.overridden ? "text-seal" : "text-ink"}
+                        >
                           {e.final_decision}
                         </span>
                       </span>

@@ -44,7 +44,11 @@ function recommendationTone(
 }
 
 export default function CandidatesPage() {
-  const { data: candidates = [], loading, error } = useCandidates(undefined, 50);
+  const {
+    data: candidates = [],
+    loading,
+    error,
+  } = useCandidates(undefined, 50);
   const [decisionFilter, setDecisionFilter] = useState("all");
   const [custodyFilter, setCustodyFilter] = useState("all");
 
@@ -87,7 +91,6 @@ export default function CandidatesPage() {
           />
         }
       />
-
 
       <Toolbar>
         <TextField
