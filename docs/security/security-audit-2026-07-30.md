@@ -8,12 +8,12 @@
 
 ## 1. Summary
 
-| Severity | Found | Fixed | Remaining |
-|---|---:|---:|---:|
-| Critical | 0 | 0 | 0 |
-| High | 5 | 5 | 0 |
-| Medium | 4 | 4 | 0 |
-| Low / accepted | 6 | 0 | 6 (documented) |
+| Severity       | Found | Fixed |      Remaining |
+| -------------- | ----: | ----: | -------------: |
+| Critical       |     0 |     0 |              0 |
+| High           |     5 |     5 |              0 |
+| Medium         |     4 |     4 |              0 |
+| Low / accepted |     6 |     0 | 6 (documented) |
 
 Verification after fixes:
 
@@ -35,7 +35,7 @@ pip-audit             -> No known vulnerabilities found
 
 `Principal.require_role()` existed in `security.py` but a tree-wide grep proved
 it was never called. Every route depended only on `CurrentPrincipal`, which
-verifies *authentication* and nothing else. Any validly signed token — including
+verifies _authentication_ and nothing else. Any validly signed token — including
 one carrying `roles: []` or `roles: ["viewer"]` — could upload resumes, read any
 of the tenant's extracted candidate text, and create job descriptions. The
 `roles` claim was decorative.
@@ -61,7 +61,7 @@ the allowlist fails closed rather than open.
 **Category:** Availability · **Status:** FIXED
 
 `_is_rate_limited()` bucketed on `request.client.host`. This service is deployed
-behind a reverse proxy (HF Spaces), where that value is the *proxy's* address
+behind a reverse proxy (HF Spaces), where that value is the _proxy's_ address
 for every request. All callers therefore shared a single 20-requests-per-minute
 bucket, so any one client could exhaust the budget for the entire tenant base.
 
@@ -94,7 +94,7 @@ timestamp falls outside the window are evicted once the ceiling is crossed.
 
 `parse_document()` is synchronous CPU-bound work (PyMuPDF, python-docx) and was
 called inline from `async def ingest_resume`. A single large or adversarial
-document pinned the event loop for its entire duration, stalling *every*
+document pinned the event loop for its entire duration, stalling _every_
 concurrent request including health checks. `ARCHITECTURE.md` §4.4 explicitly
 records this failure mode as already having caused a container restart in a
 sibling project.
@@ -110,10 +110,10 @@ sibling project.
 
 `pip-audit` reported:
 
-| Package | Was | Advisories | Now |
-|---|---|---|---|
+| Package     | Was    | Advisories                                                       | Now       |
+| ----------- | ------ | ---------------------------------------------------------------- | --------- |
 | `starlette` | 0.46.2 | PYSEC-2026-161, -248, -249, -1941, -1942, -2280, -2281 (8 total) | **1.3.1** |
-| `pytest` | 8.4.2 | PYSEC-2026-1845 | **9.1.1** |
+| `pytest`    | 8.4.2  | PYSEC-2026-1845                                                  | **9.1.1** |
 
 Starlette is transitive via FastAPI, and the old `fastapi>=0.115,<0.116` pin
 made a safe Starlette unreachable, so FastAPI was moved to `0.141.x`.
@@ -131,7 +131,7 @@ still pass — the upgrade introduced no behavioural regression.
 A file can satisfy the 10 MiB byte ceiling and still declare tens of thousands
 of pages, or expand into gigabytes of text. Both are cheap to construct and
 expensive to parse. Added `MAX_PAGES = 500` and
-`MAX_EXTRACTED_CHARS = 5_000_000`, enforced *during* extraction so the loop
+`MAX_EXTRACTED_CHARS = 5_000_000`, enforced _during_ extraction so the loop
 aborts rather than completing the expansion. Two regression tests cover the
 boundary (exactly `MAX_PAGES` parses; `MAX_PAGES + 1` raises).
 
@@ -158,47 +158,82 @@ every route, schema, and field name. Now disabled when
 
 ## 4. Categories audited and found clean
 
-| Category | Finding |
-|---|---|
-| **SQL injection** | **Clean.** All queries use SQLAlchemy `select()` with bound parameters. No f-string or `%`-formatted SQL anywhere; no `text()` with interpolation. |
-| **Path traversal** | **Clean.** `sanitize_filename()` strips directory components, normalizes Unicode to ASCII, applies a conservative character allowlist, and truncates. Storage keys are composed server-side as `tenants/<tenant>/resumes/<sha256>/<safe-name>` — the client never influences the prefix. Covered by tests for `../../etc/passwd` and `..\..\windows\system32\cmd.exe`. |
-| **File upload security** | **Clean.** Media type is determined from magic bytes, never from filename or `Content-Type`. DOCX is confirmed by inspecting the archive for `word/document.xml`, so a bare `.zip` cannot pass. Size is enforced *during* a chunked read (`read_upload_bounded`, 64 KiB chunks), so an oversized payload is never fully buffered. Empty uploads rejected. |
-| **XSS** | **Not applicable at this layer.** The API is JSON-only and renders no HTML. Extracted resume text is returned raw, which is correct for an API — but the React SPA **must not** pass it to `dangerouslySetInnerHTML`. Flagged for the frontend. |
-| **Secrets** | **Clean.** No credential in tracked files. `JWT_SECRET` and `SUPABASE_SERVICE_KEY` have no defaults and are blank in `.env.example`. `.env` and `*.key`/`*.pem` are gitignored. The only secret-shaped strings in the repo are deliberately named test fakes (`"test-secret-not-a-real-key"`). Production rejects a `JWT_SECRET` under 32 characters via a model validator. |
-| **Authentication** | **Strong.** Signature, expiry, issuer, and audience all verified; `alg=none` rejected because the algorithm allowlist is explicit; `exp` and `sub` required; a token without `tenant_id` is refused. 13 tests cover forgery, expiry, wrong issuer/audience, malformed input, and algorithm confusion. |
-| **Tenant isolation** | **Strong.** Every repository query filters on `tenant_id`. A foreign row returns 404, not 403 — existence is not disclosed. Verified for both resumes and jobs. |
-| **Prompt injection** | **Not currently exploitable — no LLM exists in this codebase.** See L-1. |
+| Category                 | Finding                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **SQL injection**        | **Clean.** All queries use SQLAlchemy `select()` with bound parameters. No f-string or `%`-formatted SQL anywhere; no `text()` with interpolation.                                                                                                                                                                                                                          |
+| **Path traversal**       | **Clean.** `sanitize_filename()` strips directory components, normalizes Unicode to ASCII, applies a conservative character allowlist, and truncates. Storage keys are composed server-side as `tenants/<tenant>/resumes/<sha256>/<safe-name>` — the client never influences the prefix. Covered by tests for `../../etc/passwd` and `..\..\windows\system32\cmd.exe`.      |
+| **File upload security** | **Clean.** Media type is determined from magic bytes, never from filename or `Content-Type`. DOCX is confirmed by inspecting the archive for `word/document.xml`, so a bare `.zip` cannot pass. Size is enforced _during_ a chunked read (`read_upload_bounded`, 64 KiB chunks), so an oversized payload is never fully buffered. Empty uploads rejected.                   |
+| **XSS**                  | **Not applicable at this layer.** The API is JSON-only and renders no HTML. Extracted resume text is returned raw, which is correct for an API — but the React SPA **must not** pass it to `dangerouslySetInnerHTML`. Flagged for the frontend.                                                                                                                             |
+| **Secrets**              | **Clean.** No credential in tracked files. `JWT_SECRET` and `SUPABASE_SERVICE_KEY` have no defaults and are blank in `.env.example`. `.env` and `*.key`/`*.pem` are gitignored. The only secret-shaped strings in the repo are deliberately named test fakes (`"test-secret-not-a-real-key"`). Production rejects a `JWT_SECRET` under 32 characters via a model validator. |
+| **Authentication**       | **Strong.** Signature, expiry, issuer, and audience all verified; `alg=none` rejected because the algorithm allowlist is explicit; `exp` and `sub` required; a token without `tenant_id` is refused. 13 tests cover forgery, expiry, wrong issuer/audience, malformed input, and algorithm confusion.                                                                       |
+| **Tenant isolation**     | **Strong.** Every repository query filters on `tenant_id`. A foreign row returns 404, not 403 — existence is not disclosed. Verified for both resumes and jobs.                                                                                                                                                                                                             |
+| **Prompt injection**     | **Mitigated in the current intake/model boundary.** Sanitization and PII-tier provider gates are implemented; adversarial corpus and score-drift gates remain pending.                                                                                                                                                                                                      |
 
 ---
 
-## 5. Accepted / deferred risks
+## 5. Post-audit implementation status (2026-08-28)
 
-| # | Risk | Severity | Rationale |
-|---|---|---|---|
-| L-1 | **No prompt-injection sanitization.** `ARCHITECTURE.md` §15.2 Layers 1–2 (invisible text, tiny fonts, off-canvas positioning, metadata stripping) are unimplemented. Resume text is stored exactly as extracted. | Deferred | Not exploitable today — nothing feeds this text to a model. **This is a hard blocker for Phase 2** and must land before the first LLM call, not after. |
-| L-2 | **No malware scanning.** HF Spaces Docker permits no ClamAV sidecar. | Accepted | Mitigated by strict magic-byte validation, size ceilings, parse limits, and `defusedxml`. A `MalwareScanner` port exists with a no-op default so enabling a scanning service later is a config change. |
-| L-3 | **Rate limiter is per-process.** | Accepted | Correct for the current single-container deployment. Must move to a shared store (Redis) before horizontal scaling — noted in the module docstring. |
-| L-4 | **No Alembic migrations.** Schema comes from `Base.metadata`. | Open | `CLAUDE.md` mandates Alembic. Required before any shared database. |
-| L-5 | **No Postgres RLS.** Tenancy is enforced at the repository layer only. | Open | Repository scoping is tested and holds, but RLS as defense-in-depth is absent. |
-| L-6 | **No dependency lockfile.** `pyproject.toml` pins ranges. | Open | CI and local can resolve differently; reproducibility is a stated project principle. |
+This section records changes made after the 2026-07-30 audit. It is not a new
+full audit and does not change the original finding counts above.
+
+- Alembic migrations, tenant RLS policies, and pgvector were applied and
+  validated against an isolated local PostgreSQL/pgvector test database. This
+  audit does not claim validation against a shared Neon environment.
+- Resume sanitization, OCR fallback, provider error normalization, and PII-tier
+  gates are implemented. Live provider calls remain opt-in and must use only
+  synthetic T0 inputs with dedicated `TALENTLENS_LIVE_*_API_KEY` credentials.
+- The durable queue includes `run_tasks`, checkpoints, result cache, stale-claim
+  recovery, PostgreSQL-validated `ready_runs()`, retry/backoff/max-attempt policy,
+  and a continuous Compose worker. Rate/quota/budget reschedules do not consume
+  a logical attempt.
+- Audit events are hash-chained and protected by a tenant PostgreSQL advisory
+  transaction lock. The canonical hash covers `occurred_at`, `ip_address`, and
+  `request_id` as persisted; unit and PostgreSQL integration tests cover intact
+  and tampered chains. This is integrity evidence, not a regulator-readiness claim.
+- Governance endpoints record reasoned human decisions and verdict overrides,
+  retaining the original automated verdict. Migration `20260810_0100` permits an
+  authenticated external actor without a local `users` row; integration tests
+  validate this and cross-tenant resources return `404`.
+- Provider dispatch centrally applies in-process atomic TPM/RPM/RPD reservations,
+  failover, typed failure propagation, and token/provider-error metrics. The
+  scheduler is not shared across processes, and scheduler retry-after is not yet
+  a structured durable reschedule value.
+- Cost accounting persists `Decimal` input/output token charges per screening run
+  using explicit environment rate cards; unknown providers and zero-default cards
+  incur zero cost. Candidate evidence retrieval is scoped by `resume_version_id`
+  before dense/lexical fusion and reranking, and actual funnel survivor counts are
+  persisted per run.
 
 ---
 
-## 6. Files changed by this audit
+## 6. Accepted / deferred risks
 
-| File | Change |
-|---|---|
-| `serving/app/main.py` | Rate-limit key derivation, bucket eviction, `reset_rate_limiter()`, error-detail sanitization, production docs gating |
-| `serving/app/security.py` | `require_roles()`, `WRITE_ROLES`/`READ_ROLES`, `WritePrincipal`/`ReadPrincipal`, log truncation |
-| `serving/app/routers/resumes.py` | RBAC guards on all three routes; pagination cursor correctness |
-| `serving/app/routers/jobs.py` | RBAC guards on all three routes |
-| `serving/app/services/parser.py` | `MAX_PAGES`, `MAX_EXTRACTED_CHARS`, streaming enforcement |
-| `serving/app/services/ingestion.py` | Threadpool offload for both parse call sites |
-| `serving/app/logging.py` | Typed return via `cast` (mypy strict) |
-| `pyproject.toml` | FastAPI 0.141.x, Starlette >=1.3.1, pytest 9.x, pytest-asyncio >=1.0 |
-| `tests/conftest.py` | Autouse rate-limiter reset fixture |
-| `tests/unit/test_auth.py` | 4 RBAC regression tests |
-| `tests/unit/test_parser.py` | 2 resource-ceiling regression tests |
+| #   | Risk                                                                                                                                                                                                             | Severity | Rationale                                                                                                                                                                                              |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| L-1 | **No prompt-injection sanitization.** `ARCHITECTURE.md` §15.2 Layers 1–2 (invisible text, tiny fonts, off-canvas positioning, metadata stripping) are unimplemented. Resume text is stored exactly as extracted. | Deferred | Not exploitable today — nothing feeds this text to a model. **This is a hard blocker for Phase 2** and must land before the first LLM call, not after.                                                 |
+| L-2 | **No malware scanning.** HF Spaces Docker permits no ClamAV sidecar.                                                                                                                                             | Accepted | Mitigated by strict magic-byte validation, size ceilings, parse limits, and `defusedxml`. A `MalwareScanner` port exists with a no-op default so enabling a scanning service later is a config change. |
+| L-3 | **Rate limiter is per-process.**                                                                                                                                                                                 | Accepted | Correct for the current single-container deployment. Must move to a shared store (Redis) before horizontal scaling — noted in the module docstring.                                                    |
+| L-4 | **No Alembic migrations.** Schema comes from `Base.metadata`.                                                                                                                                                    | Open     | `CLAUDE.md` mandates Alembic. Required before any shared database.                                                                                                                                     |
+| L-5 | **No Postgres RLS.** Tenancy is enforced at the repository layer only.                                                                                                                                           | Open     | Repository scoping is tested and holds, but RLS as defense-in-depth is absent.                                                                                                                         |
+| L-6 | **No dependency lockfile.** `pyproject.toml` pins ranges.                                                                                                                                                        | Open     | CI and local can resolve differently; reproducibility is a stated project principle.                                                                                                                   |
+
+---
+
+## 7. Files changed by this audit
+
+| File                                | Change                                                                                                                |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `serving/app/main.py`               | Rate-limit key derivation, bucket eviction, `reset_rate_limiter()`, error-detail sanitization, production docs gating |
+| `serving/app/security.py`           | `require_roles()`, `WRITE_ROLES`/`READ_ROLES`, `WritePrincipal`/`ReadPrincipal`, log truncation                       |
+| `serving/app/routers/resumes.py`    | RBAC guards on all three routes; pagination cursor correctness                                                        |
+| `serving/app/routers/jobs.py`       | RBAC guards on all three routes                                                                                       |
+| `serving/app/services/parser.py`    | `MAX_PAGES`, `MAX_EXTRACTED_CHARS`, streaming enforcement                                                             |
+| `serving/app/services/ingestion.py` | Threadpool offload for both parse call sites                                                                          |
+| `serving/app/logging.py`            | Typed return via `cast` (mypy strict)                                                                                 |
+| `pyproject.toml`                    | FastAPI 0.141.x, Starlette >=1.3.1, pytest 9.x, pytest-asyncio >=1.0                                                  |
+| `tests/conftest.py`                 | Autouse rate-limiter reset fixture                                                                                    |
+| `tests/unit/test_auth.py`           | 4 RBAC regression tests                                                                                               |
+| `tests/unit/test_parser.py`         | 2 resource-ceiling regression tests                                                                                   |
 
 No application logic was altered beyond these security fixes. No files were
 deleted.

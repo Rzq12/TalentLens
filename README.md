@@ -11,32 +11,36 @@ tenant-isolated storage, and evidence-anchored text extraction.
 
 ## What this is, and what it is not
 
-**Current state: Phase 0–4 of a phased build. Core scoring pipeline and LLM
-agents are in development. All 31 ORM models, 15 table RLS policies, and
-agent infrastructure are in place.**
+**Current state: Phase 0–4 backend workflow is operational. Deterministic
+scoring persists ranked assessments, quoted evidence, and best-effort advisory
+insights. All 31 ORM models, 15 table RLS policies, and agent infrastructure
+are in place.**
 
 The ingestion and identity foundations came first, because a scoring system
 sitting on an unreliable parser produces confident nonsense. What exists today:
 
-| Working | In progress / Next |
-|---|---|
-| JWT + Supabase JWKS authentication with tenant isolation | Semantic Matching agent (LLM judge, #7) |
-| Resume upload (PDF, DOCX) validated on content | Candidate scoring runs and ranked shortlists |
-| Deterministic parsing with exact character offsets | Per-requirement verdicts with cited evidence |
-| Content-hash deduplication | OCR fallback for scanned documents |
-| Job description upload (pasted text or document) | Agent #3-#5 (Skill/Exp/Edu extraction, T2) |
-| Hybrid dense + lexical search with reranking | Retrieval funnel (94% LLM call reduction) |
-| Rubric versioning, approval, weight normalization | Skill gap, interview question agents (#8-#9) |
-| JD Analyst agent drafting rubrics from a JD (#3) | Fraud, bias, recommendation agents (#11-#13) |
-| Agent ABC + Semantic Matching judge (#7) **NEW** | Recruiter Chat (RAG, #14) |
-| In-process orchestrator + workflow runner **NEW** | Resume Improvement (candidate-facing, #10) |
-| RLS on all 25 tenant-scoped tables **NEW** | |
-| ONNX e5-small embedding (CPU, no GPU) **NEW** | |
-| Rate-limit scheduler with key pooling **NEW** | |
-| SSE progress streaming **NEW** | |
-| Alembic migrations, 31 ORM models | |
-| Structured logging, uniform error envelope, /metrics | |
-| Dockerfile + docker-compose for local dev | |
+| Working                                                                             | In progress / Next                                     |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| JWT + Supabase JWKS authentication with tenant isolation                            | Recruiter Chat (RAG, #14)                              |
+| Resume upload (PDF, DOCX) validated on content                                      | Resume Improvement (candidate-facing, #10)             |
+| Deterministic parsing with exact character offsets                                  | Live-provider evaluation and labelled quality set      |
+| Content-hash deduplication with OCR fallback for scanned PDFs                       | Live-provider evaluation and labelled quality set      |
+| Job description upload (pasted text or document)                                    | Retrieval funnel measurement and cost controls         |
+| Hybrid dense + lexical search with reranking                                        | Fraud and bias sidecar wiring                          |
+| Rubric versioning, approval, weight normalization                                   | Recruiter Chat (RAG, #14)                              |
+| JD Analyst rubric drafting                                                          |                                                        |
+| Candidate scoring runs, ranks, verdicts, and verified evidence                      |                                                        |
+| Skill-gap, interview, and recommendation insight persistence                        |                                                        |
+| Detailed result endpoint for ranked assessments                                     |                                                        |
+| Durable admission, Postgres task queue, retry/backoff, and worker service           | Evaluation golden-set labelling (200+ recruiter cases) |
+| Recruiter decisions, verdict overrides, audit verification, and PostgreSQL coverage | Compliance delivery gates and DSAR workflow            |
+| Tenant-local tamper-evident audit chain                                             |                                                        |
+| RLS on all tenant-scoped tables                                                     |                                                        |
+| ONNX e5-small embedding (CPU, no GPU)                                               |                                                        |
+| SSE progress streaming                                                              |                                                        |
+| Alembic migrations, 31 ORM models                                                   |                                                        |
+| Structured logging, uniform error envelope, /metrics                                |                                                        |
+| Dockerfile + docker-compose for local dev                                           |                                                        |
 
 The eventual design is a multi-agent screening pipeline. This repository is the
 foundation it will sit on.
@@ -106,6 +110,13 @@ git clone https://github.com/Rzq12/TalentLens.git
 pip install -e ".[dev]"
 ```
 
+For scanned-PDF OCR outside Docker, install the optional Python package and a
+Tesseract binary available on `PATH`:
+
+```bash
+pip install -e ".[ocr]"
+```
+
 ```bash
 cp .env.example .env
 ```
@@ -126,6 +137,11 @@ Apply the migrations:
 alembic upgrade head
 ```
 
+Neon is supported with an async runtime URL such as
+`postgresql+asyncpg://...?...ssl=require`; Alembic automatically uses the
+corresponding psycopg2 URL and TLS parameter while migrating. The target
+database must permit the `vector` extension for resume embeddings.
+
 Run the API:
 
 ```bash
@@ -139,33 +155,38 @@ Interactive API docs: <http://localhost:8000/docs>
 All endpoints are prefixed `/api/v1` and require `Authorization: Bearer <jwt>`,
 except `/health`.
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Liveness probe (unauthenticated) |
-| `GET` | `/metrics` | Prometheus metrics (unauthenticated) |
-| `GET` | `/api/v1/auth/me` | Identity of the verified caller |
-| `POST` | `/api/v1/resumes` | Upload a PDF or DOCX resume, returns `202` |
-| `GET` | `/api/v1/resumes` | List the tenant's resumes (cursor-paginated) |
-| `GET` | `/api/v1/resumes/{document_id}` | Document detail with extracted text |
-| `POST` | `/api/v1/jobs` | Create a job from pasted text, returns `201` |
-| `POST` | `/api/v1/jobs/upload` | Create a job from an uploaded document |
-| `GET` | `/api/v1/jobs` | List the tenant's jobs (cursor-paginated) |
-| `GET` | `/api/v1/jobs/{job_id}` | Read a job description |
-| `POST` | `/api/v1/search/candidates` | Rank candidates against a job's requirements |
-| `POST` | `/api/v1/search/similar` | Find resumes similar to a free-text query |
-| `POST` | `/api/v1/rubrics` | Create a draft rubric for a job |
-| `GET` | `/api/v1/rubrics/{rubric_version_id}` | Read one rubric version |
-| `POST` | `/api/v1/rubrics/{rubric_version_id}/requirements` | Replace a draft's criteria |
-| `POST` | `/api/v1/rubrics/{rubric_version_id}/approve` | Approve and freeze a rubric |
-| `POST` | `/api/v1/screening/jobs/{job_id}/runs` | Start a screening run (202 + SSE) |
-| `GET` | `/api/v1/screening/runs/{run_id}` | Poll run status |
-| `GET` | `/api/v1/screening/runs/{run_id}/events` | SSE stream for run progress |
-| `GET` | `/api/v1/screening/runs/{run_id}/results` | Get ranked results of a completed run |
-| `POST` | `/api/v1/rubrics/{rubric_version_id}/versions` | Mint the next version |
-| `POST` | `/api/v1/rubrics/{rubric_version_id}/score:preview` | Score against hypothetical verdicts |
-| `GET` | `/api/v1/rubrics/templates` | List the starter templates |
-| `GET` | `/api/v1/rubrics/templates/{template_key}` | Read one starter template |
-| `POST` | `/api/v1/rubrics/templates/{template_key}:instantiate` | Seed a draft from a template |
+| Method | Path                                                   | Description                                           |
+| ------ | ------------------------------------------------------ | ----------------------------------------------------- |
+| `GET`  | `/health`                                              | Liveness probe (unauthenticated)                      |
+| `GET`  | `/metrics`                                             | Prometheus metrics (unauthenticated)                  |
+| `GET`  | `/api/v1/auth/me`                                      | Identity of the verified caller                       |
+| `POST` | `/api/v1/resumes`                                      | Upload a PDF or DOCX resume, returns `202`            |
+| `GET`  | `/api/v1/resumes`                                      | List the tenant's resumes (cursor-paginated)          |
+| `GET`  | `/api/v1/resumes/{document_id}`                        | Document detail with extracted text                   |
+| `POST` | `/api/v1/jobs`                                         | Create a job from pasted text, returns `201`          |
+| `POST` | `/api/v1/jobs/upload`                                  | Create a job from an uploaded document                |
+| `GET`  | `/api/v1/jobs`                                         | List the tenant's jobs (cursor-paginated)             |
+| `GET`  | `/api/v1/jobs/{job_id}`                                | Read a job description                                |
+| `POST` | `/api/v1/search/candidates`                            | Rank candidates against a job's requirements          |
+| `POST` | `/api/v1/search/similar`                               | Find resumes similar to a free-text query             |
+| `POST` | `/api/v1/rubrics`                                      | Create a draft rubric for a job                       |
+| `GET`  | `/api/v1/rubrics/{rubric_version_id}`                  | Read one rubric version                               |
+| `POST` | `/api/v1/rubrics/{rubric_version_id}/requirements`     | Replace a draft's criteria                            |
+| `POST` | `/api/v1/rubrics/{rubric_version_id}/approve`          | Approve and freeze a rubric                           |
+| `POST` | `/api/v1/screening/jobs/{job_id}/runs`                 | Start a screening run (202 + SSE)                     |
+| `GET`  | `/api/v1/screening/runs/{run_id}`                      | Poll run status                                       |
+| `GET`  | `/api/v1/screening/runs/{run_id}/events`               | SSE stream for run progress                           |
+| `GET`  | `/api/v1/screening/runs/{run_id}/results`              | Get ranked results of a completed run                 |
+| `POST` | `/api/v1/governance/scores/{score_id}/decisions`       | Record a human screening decision                     |
+| `POST` | `/api/v1/governance/verdicts/{verdict_id}/override`    | Record a reasoned verdict override                    |
+| `GET`  | `/api/v1/governance/audit/verify`                      | Verify the caller tenant's audit chain                |
+| `POST` | `/api/v1/rubrics/{rubric_version_id}/versions`         | Mint the next version                                 |
+| `POST` | `/api/v1/rubrics/{rubric_version_id}/score:preview`    | Score against hypothetical verdicts                   |
+| `GET`  | `/api/v1/rubrics/templates`                            | List the starter templates                            |
+| `GET`  | `/api/v1/rubrics/templates/{template_key}`             | Read one starter template                             |
+| `POST` | `/api/v1/rubrics/templates/{template_key}:instantiate` | Seed a draft from a template                          |
+| `GET`  | `/api/v1/demo/assessment/sample`                       | Sample Junior Architect job + 5 CVs (unauthenticated) |
+| `GET`  | `/api/v1/demo/assessment/run`                          | Ranked report for the sample (unauthenticated)        |
 
 Every response and error carries a `request_id`. Errors share one shape:
 
@@ -181,6 +202,40 @@ Every response and error carries a `request_id`. Errors share one shape:
 Upload validation is content-based: the media type comes from magic bytes, and
 DOCX is confirmed by inspecting the archive for `word/document.xml`. A `.pdf`
 filename over executable bytes is rejected `422`.
+
+## Operational behavior
+
+Screening admission persists a `ScreeningRun` and durable task in the same
+database transaction. The in-process runner and standalone worker can recover
+stale task claims and resume a run after interruption. The Compose `worker`
+service continuously drains ready runs. Transient failures use bounded exponential
+backoff and stop at `max_attempts`; rate-limit or quota reschedules preserve the
+attempt count and set `not_before`. Scoring reuses persisted candidate scores,
+evaluates only unfinished candidates, and reranks the complete set.
+
+Recruiters can record a decision on a score and override a displayed requirement
+verdict only with a reason. Overrides retain the original automated verdict and
+write tenant-local audit events. The decision actor is the authenticated
+principal UUID and is intentionally not required to have a local `users` row;
+apply Alembic revision `20260811_0115` before using the complete governance and
+worker policy schema. PostgreSQL integration tests cover both governance access
+controls and durable worker transitions.
+
+The deterministic evaluation gate runs `eval/golden_set.v1.json` against
+`eval/baseline.v1.json` and fails CI if a tracked metric drops by more than 3%.
+The supplied fixture is a harness seed only; it is not a recruiter-labelled
+production golden set.
+
+External-provider smoke tests are opt-in and never reuse normal provider
+credentials. Set `TALENTLENS_RUN_LIVE_PROVIDER_TESTS=1` and configure one local
+dedicated credential, such as `TALENTLENS_LIVE_GOOGLE_API_KEY`, then run:
+
+```bash
+pytest tests/live/test_provider_smoke.py -q
+```
+
+Use synthetic T0 input only. Do not run a live test with applicant data or put
+credentials in `.env.example`, source control, or chat.
 
 ## Testing
 
@@ -207,6 +262,9 @@ Quality gates:
 ```bash
 ruff check . && mypy serving/app && pytest tests/ -q
 ```
+
+The live-provider marker is opt-in; a default full suite must report it as
+skipped when no dedicated `TALENTLENS_LIVE_*_API_KEY` is configured.
 
 ## Data handling
 

@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     # against Supabase's public JWKS endpoint rather than a shared secret.
     # This is the revised-stack auth strategy (ARCHITECTURE-AGENTS.md §1.3).
     supabase_auth_jwks_url: str = ""
+    dev_auth_enabled: bool = False
 
     storage_backend: Literal["memory", "supabase"] = "memory"
     supabase_url: str = ""
@@ -117,6 +118,16 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     llm_timeout_seconds: float = 60.0
     llm_max_output_tokens: int = 2048
+
+    # Operational rate cards in USD per million tokens. Defaults are zero so
+    # deployment owners must deliberately supply the contracted rates instead
+    # of relying on stale provider pricing embedded in application code.
+    gemini_input_usd_per_million_tokens: str = "0"
+    gemini_output_usd_per_million_tokens: str = "0"
+    groq_input_usd_per_million_tokens: str = "0"
+    groq_output_usd_per_million_tokens: str = "0"
+    hf_input_usd_per_million_tokens: str = "0"
+    hf_output_usd_per_million_tokens: str = "0"
 
     cors_allow_origins: tuple[str, ...] = ("http://localhost:5173",)
 

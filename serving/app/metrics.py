@@ -96,6 +96,18 @@ candidates_scored_total = Counter(
     namespace=NAMESPACE,
 )
 
+workflow_worker_last_success_timestamp = Gauge(
+    "workflow_worker_last_success_timestamp",
+    "Unix timestamp of the last successful durable worker cycle",
+    namespace=NAMESPACE,
+)
+
+workflow_worker_cycle_errors_total = Counter(
+    "workflow_worker_cycle_errors_total",
+    "Durable worker cycle failures",
+    namespace=NAMESPACE,
+)
+
 # --- Application ------------------------------------------------------------
 
 app_info = Info(

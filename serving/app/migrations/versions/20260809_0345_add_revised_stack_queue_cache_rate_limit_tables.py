@@ -124,32 +124,20 @@ def upgrade() -> None:
 
     # op.create_table("rate_limit_buckets")  — UNLOGGED via raw SQL (plan.md §1.4)
     # Regex test guard: CREATE TABLE rate_limit_buckets
-    op.execute("CREATE UNLOGGED TABLE rate_limit_buckets (")
     op.execute(
-        "    provider       VARCHAR(64)  NOT NULL,"
+        """
+        CREATE UNLOGGED TABLE rate_limit_buckets (
+            provider VARCHAR(64) NOT NULL,
+            model VARCHAR(128) NOT NULL,
+            api_key_hash VARCHAR(64) NOT NULL,
+            "window" VARCHAR(16) NOT NULL,
+            window_start TIMESTAMPTZ NOT NULL,
+            used BIGINT NOT NULL DEFAULT 0,
+            cap BIGINT NOT NULL,
+            PRIMARY KEY (provider, model, api_key_hash, "window", window_start)
+        )
+        """
     )
-    op.execute(
-        "    model          VARCHAR(128) NOT NULL,"
-    )
-    op.execute(
-        "    api_key_hash   VARCHAR(64)  NOT NULL,"
-    )
-    op.execute(
-        "    window         VARCHAR(16)  NOT NULL,"
-    )
-    op.execute(
-        "    window_start   TIMESTAMPTZ  NOT NULL,"
-    )
-    op.execute(
-        "    used           BIGINT       NOT NULL DEFAULT 0,"
-    )
-    op.execute(
-        "    cap            BIGINT       NOT NULL,"
-    )
-    op.execute(
-        "    PRIMARY KEY (provider, model, api_key_hash, window, window_start)"
-    )
-    op.execute(")")
     op.create_index(
         "ix_rate_limit_buckets_lookup",
         "rate_limit_buckets",

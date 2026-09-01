@@ -58,7 +58,11 @@ def run_migrations_online() -> None:
     # committed. Fall back to Settings, which is the single source of config.
     url = config.get_main_option("sqlalchemy.url") or get_settings().database_url
     section = config.get_section(config.config_ini_section, {})
-    section["sqlalchemy.url"] = url.replace("+asyncpg", "+psycopg2")
+    sync_url = url.replace("+asyncpg", "+psycopg2")
+    # asyncpg accepts ``ssl=require`` while psycopg2/libpq expects ``sslmode``.
+    sync_url = sync_url.replace("?ssl=require", "?sslmode=require")
+    sync_url = sync_url.replace("&ssl=require", "&sslmode=require")
+    section["sqlalchemy.url"] = sync_url
     engine = engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
 
     with engine.connect() as own_connection:

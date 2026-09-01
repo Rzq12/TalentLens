@@ -12,12 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY pyproject.toml requirements.lock ./
+COPY pyproject.toml requirements.lock alembic.ini ./
+COPY serving/ serving/
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -e ".[dev]"
+    && pip install --no-cache-dir -e ".[dev,ocr]"
 
-COPY serving/ serving/
 COPY tests/ tests/
 
 ENV PYTHONPATH=/app/serving

@@ -51,6 +51,11 @@ class HFProvider:
         self._timeout = timeout
         self._client: httpx.AsyncClient | None = None
 
+    @property
+    def rate_limit_key(self) -> str:
+        """Return the credential only to the in-process scheduler."""
+        return self._api_key
+
     def __repr__(self) -> str:
         return f"<HFProvider model={self.model!r}>"
 

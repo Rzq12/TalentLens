@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+
 - Initial project scaffolding: FastAPI application factory, layered architecture
 - JWT authentication with tenant isolation
 - Resume upload (PDF, DOCX) with content-based MIME validation
@@ -29,17 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Uniform error envelope for all API responses
 - `ChunkRepositoryProtocol` for type-safe repository abstraction
 - `test_docs_sync.py` to keep README and `.env.example` in sync with code
+- PostgreSQL governance integration tests for external JWT principals and tenant isolation
+- Durable retry policy with classified errors, bounded exponential backoff, quota rescheduling, and maximum attempts
+- Continuous Compose `worker` service with durable worker health metrics
+- Versioned deterministic evaluation harness, baseline artifacts, and a 3% regression gate in CI
 
 ### Changed
+
 - Rate limiter simplified from JWT-subject-based to IP-only keyed on X-Forwarded-For
 - Removed `_HTTP_ERROR_CODES` dict in favor of simple `"HTTP_ERROR"` fallback
 
 ### Fixed
+
 - Repository moved from `Rzq12/talentlens` to `Rzq12/TalentLens`
 - Database quickstart image corrected to `pgvector/pgvector:pg16`
 - README endpoint listing updated to reflect 20 actual endpoints
 
 ### Security
+
 - LLM provider keys never returned in API responses, never logged
 - Resume text treated as untrusted input throughout the pipeline
 - Injection sanitization pipeline (Layer 1-2) with quarantine support

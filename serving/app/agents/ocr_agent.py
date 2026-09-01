@@ -22,6 +22,17 @@ from app.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _parse_confidence(value: object) -> float:
+    """Normalize Tesseract confidence values and treat sentinels as zero."""
+    if not isinstance(value, (str, int, float)):
+        return 0.0
+    try:
+        confidence = float(value)
+    except ValueError:
+        return 0.0
+    return confidence if confidence > 0 else 0.0
+
+
 class WordBox(BaseModel):
     text: str = ""
     confidence: float = 0.0
@@ -60,7 +71,7 @@ class OcrAgent(DeterministicAgent[OcrInput, OcrOutput]):
         try:
             import io
 
-            import pytesseract
+            import pytesseract  # type: ignore[import-not-found]
             from PIL import Image
         except ImportError:
             return AgentResult(
@@ -111,8 +122,11 @@ class OcrAgent(DeterministicAgent[OcrInput, OcrOutput]):
         text = " ".join(
             w for w in data.get("text", []) if isinstance(w, str) and w.strip()
         )
+        raw_confidences = data.get("conf", [])
         confidences = [
-            c for c in data.get("conf", []) if isinstance(c, (int, float)) and c > 0
+            confidence
+            for raw_confidence in raw_confidences
+            if (confidence := _parse_confidence(raw_confidence)) > 0
         ]
         mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
 
@@ -122,7 +136,7 @@ class OcrAgent(DeterministicAgent[OcrInput, OcrOutput]):
             if isinstance(w, str) and w.strip():
                 words.append(WordBox(
                     text=w,
-                    confidence=float(data["conf"][j]) if data["conf"][j] != "-1" else 0.0,
+                    confidence=_parse_confidence(data["conf"][j]),
                     x=data["left"][j],
                     y=data["top"][j],
                     width=data["width"][j],

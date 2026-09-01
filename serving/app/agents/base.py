@@ -9,6 +9,7 @@ handed to a provider that has not declared it may see it.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol, runtime_checkable
@@ -16,10 +17,13 @@ from typing import Final, Protocol, runtime_checkable
 import structlog
 
 from app.exceptions import (
+    BudgetExceededError,
     LLMProviderError,
     LLMRefusalError,
     NoEligibleProviderError,
 )
+from app.metrics import llm_provider_errors_total, llm_tokens_used_total
+from app.services.rate_limiter import RateLimitScheduler
 
 logger = structlog.get_logger(__name__)
 
@@ -102,9 +106,12 @@ class LLMProvider(Protocol):
     model: str
     tiers: frozenset[str]
 
+    @property
+    def rate_limit_key(self) -> str:
+        """Return an opaque key used only by the in-process scheduler."""
+
     async def generate(self, request: LLMRequest) -> LLMResponse:
         """Answer a request, or raise a classified failure."""
-        ...
 
 
 @dataclass
@@ -121,6 +128,13 @@ class FailoverChain:
     """
 
     providers: Sequence[LLMProvider]
+    scheduler: RateLimitScheduler | None = None
+
+    @staticmethod
+    def _estimated_tokens(request: LLMRequest) -> int:
+        """Return a conservative, deterministic dispatch reservation."""
+        text_length = len(request.prompt) + len(request.system or "")
+        return max(1, text_length // 4) + (request.max_output_tokens or 0)
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         """Return the first successful response from an eligible provider.
@@ -137,12 +151,15 @@ class FailoverChain:
                 model would most likely refuse too, and a refusal can be
                 correct.
             LLMProviderError: If a failure could not be improved on by
-                retrying elsewhere, such as a context overflow.
+                retrying elsewhere, such as a context overflow or all local
+                provider buckets being exhausted.
             NoEligibleProviderError: If no provider is permitted at this tier,
                 or every eligible provider failed.
         """
         attempted = 0
+        rate_limited_waits: list[float] = []
         last_error: LLMProviderError | None = None
+        estimated_tokens = self._estimated_tokens(request)
 
         for provider in self.providers:
             if request.pii_tier not in provider.tiers:
@@ -153,12 +170,34 @@ class FailoverChain:
                 )
                 continue
 
+            if self.scheduler is not None and not self.scheduler.reserve(
+                provider.name,
+                provider.model,
+                provider.rate_limit_key,
+                estimated_tokens,
+            ):
+                rate_limited_waits.append(
+                    self.scheduler.estimated_wait(
+                        provider.name,
+                        provider.model,
+                        provider.rate_limit_key,
+                        estimated_tokens,
+                    )
+                )
+                llm_provider_errors_total.labels(
+                    provider=provider.name, model=provider.model, kind="rate_limit"
+                ).inc()
+                continue
+
             attempted += 1
             try:
-                return await provider.generate(request)
+                response = await provider.generate(request)
             except LLMRefusalError:
                 raise
             except LLMProviderError as exc:
+                llm_provider_errors_total.labels(
+                    provider=provider.name, model=provider.model, kind=exc.kind
+                ).inc()
                 if exc.kind not in _RETRYABLE_KINDS:
                     raise
                 last_error = exc
@@ -167,6 +206,22 @@ class FailoverChain:
                     provider=provider.name,
                     kind=exc.kind,
                 )
+                continue
+
+            llm_tokens_used_total.labels(
+                provider=response.provider, model=response.model, direction="input"
+            ).inc(response.prompt_tokens)
+            llm_tokens_used_total.labels(
+                provider=response.provider, model=response.model, direction="output"
+            ).inc(response.completion_tokens)
+            return response
+
+        if attempted == 0 and rate_limited_waits:
+            retry_after_seconds = max(1, int(max(rate_limited_waits)))
+            raise LLMProviderError(
+                f"All eligible providers are locally rate limited; retry in {retry_after_seconds} seconds.",
+                kind="rate_limit",
+            )
 
         if attempted == 0:
             # Deliberately says nothing about the prompt. This message reaches

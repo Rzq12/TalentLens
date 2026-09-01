@@ -30,6 +30,7 @@ from app.exceptions import (
     NoEligibleProviderError,
     TalentLensError,
 )
+from app.services.rate_limiter import RateLimitScheduler
 
 FAKE_GOOGLE_KEY = "AIzaSy-not-a-real-key-000000000000000000"
 FAKE_GROQ_KEY = "gsk_not_a_real_key_0000000000000000000000000000000000"
@@ -502,11 +503,14 @@ def test_a_provider_repr_does_not_contain_its_api_key(build: Any) -> None:
 class _StubProvider:
     """A provider that replays a scripted sequence of outcomes."""
 
-    def __init__(self, name: str, outcomes: list[Any], tiers: frozenset[str] | None = None) -> None:
+    def __init__(
+        self, name: str, outcomes: list[Any], tiers: frozenset[str] | None = None
+    ) -> None:
         """Record the script and the tiers this stub is allowed to serve."""
         self.name = name
         self.model = f"{name}-model"
         self.tiers = tiers if tiers is not None else frozenset({"T0", "T1"})
+        self.rate_limit_key = f"{name}-test-key"
         self._outcomes = list(outcomes)
         self.calls = 0
 
@@ -585,6 +589,47 @@ async def test_when_every_provider_fails_the_chain_raises_no_eligible_provider()
 
     with pytest.raises(NoEligibleProviderError):
         await FailoverChain([first, second]).generate(LLMRequest(prompt="x"))
+
+
+async def test_the_chain_skips_a_locally_rate_limited_provider_before_dispatch() -> None:
+    scheduler = RateLimitScheduler()
+    scheduler.register_key("a", "a-model", "a-test-key", tpm=10, rpm=1, rpd=10)
+    assert scheduler.reserve("a", "a-model", "a-test-key", estimated_tokens=1)
+    first = _StubProvider("a", [_ok("a")])
+    second = _StubProvider("b", [_ok("b")])
+
+    result = await FailoverChain([first, second], scheduler=scheduler).generate(
+        LLMRequest(prompt="x")
+    )
+
+    assert result.provider == "b"
+    assert first.calls == 0
+    assert second.calls == 1
+
+
+async def test_all_locally_rate_limited_providers_report_a_rate_limit() -> None:
+    scheduler = RateLimitScheduler()
+    scheduler.register_key("a", "a-model", "a-test-key", tpm=10, rpm=1, rpd=10)
+    assert scheduler.reserve("a", "a-model", "a-test-key", estimated_tokens=1)
+    first = _StubProvider("a", [_ok("a")])
+
+    with pytest.raises(LLMProviderError) as excinfo:
+        await FailoverChain([first], scheduler=scheduler).generate(LLMRequest(prompt="x"))
+
+    assert excinfo.value.kind == "rate_limit"
+    assert first.calls == 0
+
+
+async def test_scheduler_reservation_uses_estimated_prompt_and_output_tokens() -> None:
+    scheduler = RateLimitScheduler()
+    provider = _StubProvider("a", [_ok("a")])
+
+    await FailoverChain([provider], scheduler=scheduler).generate(
+        LLMRequest(prompt="abcd", system="efgh", max_output_tokens=3)
+    )
+
+    tpm_bucket, _, _ = scheduler._buckets[scheduler._key("a", "a-model", "a-test-key")]
+    assert len(tpm_bucket._timestamps) == 5
 
 
 async def test_an_empty_chain_raises_rather_than_returning_nothing() -> None:

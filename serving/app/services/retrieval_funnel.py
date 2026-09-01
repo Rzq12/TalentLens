@@ -67,48 +67,97 @@ async def run_retrieval_funnel(
     Returns:
         Tuple of (top-K chunks for judge, funnel counts per stage).
     """
+    return await _run_funnel(
+        session=session,
+        embedder=embedder,
+        reranker=reranker,
+        tenant_id=tenant_id,
+        query=query,
+        resume_version_id=None,
+        settings=settings,
+    )
+
+
+async def run_resume_version_retrieval_funnel(
+    *,
+    session: AsyncSession,
+    embedder: EmbeddingService,
+    reranker: RerankerService,
+    tenant_id: uuid.UUID,
+    resume_version_id: uuid.UUID,
+    query: str,
+    settings: Settings | None = None,
+) -> tuple[list[ChunkWithScore], FunnelResult]:
+    """Retrieve judge evidence from exactly one candidate resume version."""
+    return await _run_funnel(
+        session=session,
+        embedder=embedder,
+        reranker=reranker,
+        tenant_id=tenant_id,
+        query=query,
+        resume_version_id=resume_version_id,
+        settings=settings,
+    )
+
+
+async def _run_funnel(
+    *,
+    session: AsyncSession,
+    embedder: EmbeddingService,
+    reranker: RerankerService,
+    tenant_id: uuid.UUID,
+    query: str,
+    resume_version_id: uuid.UUID | None,
+    settings: Settings | None = None,
+) -> tuple[list[ChunkWithScore], FunnelResult]:
+    """Run hybrid retrieval with an optional candidate-resume boundary."""
     cfg = settings or get_settings()
     repo = ChunkRepository(session)
 
-    # Stage 1: Hybrid recall
     query_embedding = await embedder.embed_query(query)
-    dense = await repo.search_dense(tenant_id, query_embedding, STAGE1_RECALL_K)
-    lexical = await repo.search_lexical(tenant_id, query, STAGE1_RECALL_K)
+    dense = await repo.search_dense(
+        tenant_id,
+        query_embedding,
+        STAGE1_RECALL_K,
+        resume_version_id=resume_version_id,
+    )
+    lexical = await repo.search_lexical(
+        tenant_id,
+        query,
+        STAGE1_RECALL_K,
+        resume_version_id=resume_version_id,
+    )
     fused = reciprocal_rank_fusion(
         [dense, lexical],
         [cfg.search_dense_weight, cfg.search_lexical_weight],
     )
 
-    funnel = FunnelResult(initial_pool=STAGE1_RECALL_K, after_recall=len(fused))
+    initial_pool = len({item.chunk.id for item in [*dense, *lexical]})
+    funnel = FunnelResult(initial_pool=initial_pool, after_recall=len(fused))
 
     if not fused:
         return [], funnel
 
-    # Stage 2: Cross-encoder rerank
-    rerank_input = [c.chunk.content for c in fused[:STAGE2_RERANK_TOPK * 2]]
+    rerank_input = [candidate.chunk.content for candidate in fused[: STAGE2_RERANK_TOPK * 2]]
     rerank_results = await reranker.rerank(query, rerank_input, STAGE2_RERANK_TOPK)
 
-    reranked: list[ChunkWithScore] = []
-    for rr in rerank_results:
-        if rr.index < len(fused):
-            reranked.append(
-                ChunkWithScore(chunk=fused[rr.index].chunk, score=rr.score)
-            )
-
+    reranked = [
+        ChunkWithScore(chunk=fused[result.index].chunk, score=result.score)
+        for result in rerank_results
+        if result.index < len(fused)
+    ]
     funnel.after_rerank = len(reranked)
-
-    # Stage 3: Trim to judge pool
     final = reranked[:JUDGE_TOP_K] if reranked else fused[:JUDGE_TOP_K]
     funnel.final_pool = len(final)
 
     logger.info(
         "funnel_complete",
         tenant_id=str(tenant_id),
+        resume_version_id=str(resume_version_id) if resume_version_id else None,
         query_length=len(query),
         initial=funnel.initial_pool,
         after_recall=funnel.after_recall,
         after_rerank=funnel.after_rerank,
         final=funnel.final_pool,
     )
-
     return final, funnel

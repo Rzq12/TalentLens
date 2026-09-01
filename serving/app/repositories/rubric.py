@@ -105,6 +105,23 @@ class RubricRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def list_versions(
+        self,
+        tenant_id: uuid.UUID,
+        job_id: uuid.UUID | None = None,
+        limit: int = 50,
+    ) -> list[RubricVersion]:
+        """Return recent rubric versions scoped to a tenant and optional job."""
+        stmt = (
+            select(RubricVersion)
+            .where(RubricVersion.tenant_id == tenant_id)
+            .order_by(RubricVersion.created_at.desc())
+            .limit(limit)
+        )
+        if job_id is not None:
+            stmt = stmt.where(RubricVersion.job_id == job_id)
+        return list((await self._session.execute(stmt)).scalars().all())
+
     async def max_version_for_job(self, tenant_id: uuid.UUID, job_id: uuid.UUID) -> int:
         """Return the highest version number minted for a job.
 

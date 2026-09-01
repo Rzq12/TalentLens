@@ -76,6 +76,11 @@ class _HTTPProviderBase:
         self._timeout = timeout
         self._transport = transport
 
+    @property
+    def rate_limit_key(self) -> str:
+        """Return the credential only to the in-process scheduler."""
+        return self._api_key
+
     def __repr__(self) -> str:
         """Render without the credential.
 

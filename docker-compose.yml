@@ -33,18 +33,38 @@ services:
     build: .
     ports:
       - "7860:7860"
-    environment:
+    environment: &app_environment
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/talentlens
       JWT_SECRET: dev-secret-change-in-production-32-chars
       JWT_ISSUER: https://localhost/auth/v1
       JWT_AUDIENCE: authenticated
       STORAGE_BACKEND: memory
       ENVIRONMENT: development
+      DEV_AUTH_ENABLED: "true"
       LOG_LEVEL: DEBUG
-      CORS_ALLOW_ORIGINS: '["http://localhost:5173"]'
+      CORS_ALLOW_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *app_environment
     depends_on:
       db:
         condition: service_healthy
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.workers.screening"]
+    environment:
+      <<: *app_environment
+      WORKER_CONTINUOUS: "true"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

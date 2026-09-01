@@ -6,9 +6,10 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, File, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, Query, UploadFile, status
 
-from app.db import DbSession
+from app.agents.factory import build_failover_chain
+from app.db import DbSession, get_sessionmaker, set_tenant_context
 from app.exceptions import ResourceNotFoundError
 from app.repositories.ingestion import ResumeRepository
 from app.schemas.ingestion import (
@@ -19,10 +20,24 @@ from app.schemas.ingestion import (
 )
 from app.security import ReadPrincipal, WritePrincipal
 from app.services.ingestion import ingest_resume
+from app.services.profile_extraction import extract_candidate_profile
 from app.services.storage import get_object_store
 from app.utils.upload import read_upload_bounded
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
+
+
+async def _extract_profile(profile_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
+    """Run optional LLM extraction outside the upload request transaction."""
+    set_tenant_context(tenant_id)
+    async with get_sessionmaker()() as session:
+        await extract_candidate_profile(
+            session=session,
+            profile_id=profile_id,
+            tenant_id=tenant_id,
+            chain=build_failover_chain(),
+        )
+        await session.commit()
 
 
 @router.post(
@@ -39,14 +54,22 @@ router = APIRouter(prefix="/resumes", tags=["resumes"])
 async def upload_resume(
     principal: WritePrincipal,
     session: DbSession,
+    background_tasks: BackgroundTasks,
     file: Annotated[UploadFile, File()],
+    candidate_name: Annotated[str, Form(min_length=1, max_length=255)],
+    candidate_email: Annotated[str | None, Form(max_length=255)] = None,
+    consent_granted: Annotated[bool, Form()] = False,
 ) -> ResumeUploadResponse:
     """Ingest one resume.
 
     Args:
         principal: Verified caller.
         session: Database session.
+        background_tasks: Background tasks.
         file: The uploaded document.
+        candidate_name: Candidate name supplied by the recruiter.
+        candidate_email: Optional tenant-scoped candidate email.
+        consent_granted: Explicit permission to screen the candidate.
 
     Returns:
         An acknowledgement describing the stored document.
@@ -58,10 +81,19 @@ async def upload_resume(
         principal=principal,
         content=content,
         filename=file.filename or "unnamed",
+        candidate_name=candidate_name,
+        candidate_email=candidate_email,
+        consent_granted=consent_granted,
     )
     document = outcome.document
+    if not outcome.deduplicated and not outcome.quarantined:
+        background_tasks.add_task(
+            _extract_profile, outcome.profile.id, principal.tenant_id
+        )
     return ResumeUploadResponse(
         document_id=document.id,
+        candidate_id=outcome.candidate.id,
+        profile_id=outcome.profile.id,
         filename=document.filename_sanitized,
         media_type=document.media_type,
         size_bytes=document.size_bytes,

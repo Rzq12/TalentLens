@@ -1,0 +1,10 @@
+{
+  "case_count": 2,
+  "dataset_version": "v1",
+  "metrics": {
+    "classification_f1": 1.0,
+    "evidence_verbatim_rate": 1.0,
+    "ranking_kendall_tau": 0.6666666666666666,
+    "retrieval_recall_at_20": 1.0
+  }
+}

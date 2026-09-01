@@ -8,6 +8,10 @@ ARCHITECTURE.md
 plan.md
 prd.md
 task.md
+BUILD-COMPLETE.md
+PRODUCT.md
+AGENTS.md
+CLAUDE.md
 graphify-out
 # ---------------------------------------------------------------------------
 # Python bytecode and build artifacts
@@ -134,6 +138,22 @@ desktop.ini
 # ---------------------------------------------------------------------------
 ECC/
 .agent
+stitch_lexis_ai_recruitment
+
+# ---------------------------------------------------------------------------
+# Agent skills installed via `npx skills add` (vendored, not project code)
+# ---------------------------------------------------------------------------
+.agents/
+.claude/
+.gemini/
+.codex/
+.opencode/
+.kiro/
+.trae/
+.zed/
+.antigravity/
+skills-lock.json
+.impeccable/
 # ---------------------------------------------------------------------------
 # Frontend (React + Vite), for when the web/ workspace lands
 # ---------------------------------------------------------------------------
