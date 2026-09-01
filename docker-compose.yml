@@ -41,7 +41,7 @@ services:
       STORAGE_BACKEND: memory
       ENVIRONMENT: development
       LOG_LEVEL: DEBUG
-      CORS_ALLOW_ORIGINS: '["http://localhost:5173"]'
+      CORS_ALLOW_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
     depends_on:
       migrate:
         condition: service_completed_successfully
