@@ -39,12 +39,14 @@ def _openapi_paths() -> set[tuple[str, str]]:
     """
     # `Settings` has required fields with no defaults; the session fixture in
     # conftest populates them, and these guard direct single-file invocation.
-    os.environ.setdefault(
-        "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5433/talentlens_test"
-    )
+    # A developer `.env` (e.g. pointing at Neon) wins; the localhost URL is
+    # only a fallback for CI and fresh clones.
+    from tests.conftest import _resolve_test_database_url
+
     os.environ.setdefault("JWT_SECRET", "test-secret-not-a-real-key")
     os.environ.setdefault("STORAGE_BACKEND", "memory")
     os.environ.setdefault("ENVIRONMENT", "test")
+    _resolve_test_database_url()
 
     from app.main import create_app
 

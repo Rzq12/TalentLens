@@ -4,14 +4,58 @@ from __future__ import annotations
 
 import os
 import uuid
+import warnings
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 JWT_TEST_SECRET = "test-secret-not-a-real-key"
 API_KEY_TEST = "test-api-key"
+
+# Fallback for environments without a `.env` (CI, fresh clones). A developer's
+# `.env` — for example one pointing at Neon — always wins over this default.
+LOCAL_TEST_DATABASE_URL = (
+    "postgresql+asyncpg://postgres:postgres@localhost:5433/talentlens_test"
+)
+
+
+def database_url_from_env_file() -> str | None:
+    """Read `DATABASE_URL` from a local `.env`, mirroring pydantic-settings.
+
+    Returns:
+        The URL when the file exists and the key is non-empty, else `None`.
+        Only the simple `KEY=value` form is handled — enough for the template
+        this repo ships.
+    """
+    env_file = Path(".env")
+    if not env_file.exists():
+        return None
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.startswith("DATABASE_URL="):
+            value = line.split("=", 1)[1].strip().strip("'\"")
+            return value or None
+    return None
+
+
+def _resolve_test_database_url() -> str | None:
+    """Decide which DATABASE_URL the test process should expose.
+
+    The developer's `.env` wins: when it declares a URL we must *remove* any
+    process-level override and let `Settings` read the file itself. Only when
+    neither `.env` nor the environment provides one do we pin the local
+    docker Postgres fallback.
+    """
+    if database_url_from_env_file():
+        os.environ.pop("DATABASE_URL", None)
+        return database_url_from_env_file()
+    if os.environ.get("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+    os.environ["DATABASE_URL"] = LOCAL_TEST_DATABASE_URL
+    return LOCAL_TEST_DATABASE_URL
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -27,8 +71,15 @@ def _test_environment() -> Iterator[None]:
     has a ``.env`` than in CI, which has none. Empty means every provider is
     absent, which is the state these tests assert against.
     """
+    resolved_db_url = _resolve_test_database_url()
+    if resolved_db_url and "localhost" not in resolved_db_url and "127.0.0.1" not in resolved_db_url:
+        warnings.warn(
+            "Tests are using a remote DATABASE_URL (e.g. Neon). Schema is "
+            "dropped and recreated around every test — never point this at "
+            "a database holding real data.",
+            stacklevel=2,
+        )
     defaults = {
-        "DATABASE_URL": "postgresql+asyncpg://postgres:postgres@localhost:5433/talentlens_test",
         "JWT_SECRET": JWT_TEST_SECRET,
         "JWT_ISSUER": "https://test.local/auth/v1",
         "JWT_AUDIENCE": "authenticated",

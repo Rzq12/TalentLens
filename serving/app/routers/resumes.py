@@ -19,10 +19,11 @@ from app.schemas.ingestion import (
     ResumeUploadResponse,
 )
 from app.security import ReadPrincipal, WritePrincipal
-from app.services.ingestion import ingest_resume
+from app.services.ingestion import ingest_resume, validate_upload
 from app.services.profile_extraction import extract_candidate_profile
 from app.services.storage import get_object_store
 from app.utils.upload import read_upload_bounded
+from app.services.bulk_ingest import extract_resumes_from_zip
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
@@ -206,3 +207,87 @@ async def read_resume(
         sanitization_report=version.sanitization_report if version else {},
         created_at=document.created_at,
     )
+
+
+@router.post(
+    "/bulk",
+    response_model=ResumeListResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Upload a ZIP of resumes",
+    description=(
+        "Accepts a ZIP archive of PDF/DOCX resumes. Archive-hardened: entry "
+        "count and decompressed-size caps, compression-ratio bomb detection, "
+        "and per-entry media validation. Invalid members are reported, not "
+        "fatal to the batch."
+    ),
+)
+async def upload_resumes_bulk(
+    principal: WritePrincipal,
+    session: DbSession,
+    background_tasks: BackgroundTasks,
+    file: Annotated[UploadFile, File()],
+    consent_granted: Annotated[bool, Form()] = False,
+) -> list[ResumeUploadResponse]:
+    """Ingest every supported document inside a ZIP archive.
+
+    Args:
+        principal: Verified caller.
+        session: Database session.
+        background_tasks: Background tasks.
+        file: The uploaded ZIP archive.
+        consent_granted: Explicit permission to screen these candidates.
+
+    Returns:
+        One acknowledgement per accepted entry; rejected members are
+        summarised in the response header-level `rejected` list.
+    """
+    content = await read_upload_bounded(file)
+
+    def _validate_entry(member: bytes) -> str:
+        return validate_upload(member)
+
+    from app.config import get_settings as _get_settings
+
+    _cfg = _get_settings()
+    extraction = extract_resumes_from_zip(
+        content,
+        max_entries=_cfg.bulk_max_entries,
+        max_uncompressed_bytes=_cfg.bulk_max_uncompressed_bytes,
+        validate_entry=_validate_entry,
+    )
+
+    responses: list[ResumeUploadResponse] = []
+    for entry in extraction.entries:
+        outcome = await ingest_resume(
+            session=session,
+            store=get_object_store(),
+            principal=principal,
+            content=entry.content,
+            filename=entry.filename,
+            candidate_name=entry.filename,
+            candidate_email=None,
+            consent_granted=consent_granted,
+        )
+        if not outcome.deduplicated and not outcome.quarantined:
+            background_tasks.add_task(
+                _extract_profile, outcome.profile.id, principal.tenant_id
+            )
+        document = outcome.document
+        responses.append(
+            ResumeUploadResponse(
+                document_id=document.id,
+                candidate_id=outcome.candidate.id,
+                profile_id=outcome.profile.id,
+                filename=document.filename_sanitized,
+                media_type=document.media_type,
+                size_bytes=document.size_bytes,
+                sha256=document.sha256,
+                page_count=document.page_count,
+                parse_status=document.parse_status,
+                needs_ocr=document.needs_ocr,
+                deduplicated=outcome.deduplicated,
+                injection_risk_score=outcome.injection_risk_score,
+                quarantined=outcome.quarantined,
+            )
+        )
+    return responses

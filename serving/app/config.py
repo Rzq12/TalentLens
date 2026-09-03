@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 10 * 1024 * 1024
     allowed_upload_mime_types: tuple[str, ...] = ("application/pdf", DOCX_MIME)
 
+    # --- Bulk ZIP upload hardening (POST /resumes/bulk) -----------------------
+    # Entry cap and cumulative decompressed budget for one archive. The budget
+    # is the zip-bomb guard: reading aborts the moment it is crossed.
+    bulk_max_entries: int = 200
+    bulk_max_uncompressed_bytes: int = 2 * 1024 * 1024 * 1024
+
     # --- Embedding (Phase 2) -------------------------------------------------
     # In-process ONNX e5-small (revised stack, ARCHITECTURE-AGENTS.md §1.1).
     # Set EMBEDDING_BACKEND=tei to use external HuggingFace TEI endpoint instead.

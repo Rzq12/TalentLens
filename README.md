@@ -161,8 +161,11 @@ except `/health`.
 | `GET`  | `/metrics`                                             | Prometheus metrics (unauthenticated)                  |
 | `GET`  | `/api/v1/auth/me`                                      | Identity of the verified caller                       |
 | `POST` | `/api/v1/resumes`                                      | Upload a PDF or DOCX resume, returns `202`            |
+| `POST` | `/api/v1/resumes/bulk`                                 | Upload a ZIP of resumes (archive-hardened), `202`     |
 | `GET`  | `/api/v1/resumes`                                      | List the tenant's resumes (cursor-paginated)          |
 | `GET`  | `/api/v1/resumes/{document_id}`                        | Document detail with extracted text                   |
+| `GET`  | `/api/v1/candidates`                                   | Candidate assessment register (cursor-paginated)      |
+| `GET`  | `/api/v1/candidates/{candidate_id}`                    | One candidate's assessment detail                     |
 | `POST` | `/api/v1/jobs`                                         | Create a job from pasted text, returns `201`          |
 | `POST` | `/api/v1/jobs/upload`                                  | Create a job from an uploaded document                |
 | `GET`  | `/api/v1/jobs`                                         | List the tenant's jobs (cursor-paginated)             |
@@ -170,10 +173,12 @@ except `/health`.
 | `POST` | `/api/v1/search/candidates`                            | Rank candidates against a job's requirements          |
 | `POST` | `/api/v1/search/similar`                               | Find resumes similar to a free-text query             |
 | `POST` | `/api/v1/rubrics`                                      | Create a draft rubric for a job                       |
+| `GET`  | `/api/v1/rubrics`                                      | List rubric versions (optionally filtered by job)     |
 | `GET`  | `/api/v1/rubrics/{rubric_version_id}`                  | Read one rubric version                               |
 | `POST` | `/api/v1/rubrics/{rubric_version_id}/requirements`     | Replace a draft's criteria                            |
 | `POST` | `/api/v1/rubrics/{rubric_version_id}/approve`          | Approve and freeze a rubric                           |
 | `POST` | `/api/v1/screening/jobs/{job_id}/runs`                 | Start a screening run (202 + SSE)                     |
+| `GET`  | `/api/v1/screening/runs`                               | List screening runs (optionally filtered by job)      |
 | `GET`  | `/api/v1/screening/runs/{run_id}`                      | Poll run status                                       |
 | `GET`  | `/api/v1/screening/runs/{run_id}/events`               | SSE stream for run progress                           |
 | `GET`  | `/api/v1/screening/runs/{run_id}/results`              | Get ranked results of a completed run                 |
@@ -243,11 +248,16 @@ credentials in `.env.example`, source control, or chat.
 pytest tests/ -q
 ```
 
-Integration tests need PostgreSQL with pgvector on port 5433:
+Integration tests need PostgreSQL with pgvector. The test suite resolves
+`DATABASE_URL` in this order: a local `.env` first (e.g. a Neon pooled URL),
+then the process environment, then the docker fallback below:
 
 ```bash
 docker run -d --name talentlens-test-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=talentlens_test -p 5433:5432 pgvector/pgvector:pg16
 ```
+
+> **Warning:** the suite drops and recreates the schema around every test.
+> Never point `DATABASE_URL` at a database holding real data.
 
 **582 tests (547 unit, 35 integration), 90.6% coverage** (floor enforced at 80%).
 Written test-first — the per-cycle RED/GREEN evidence lives in
