@@ -160,18 +160,21 @@ def _segment_into_sections(text: str) -> list[_Section]:
 
     for line in lines:
         detected = _detect_section(line)
-        if detected is not None and current_lines:
+        if detected is not None:
             section_text = "\n".join(current_lines).strip()
             if section_text:
+                lead = len(section_text) - len(section_text.lstrip())
                 sections.append(_Section(
                     label=current_label,
                     text=section_text,
-                    start_char=current_start,
-                    end_char=current_start + len(section_text),
+                    start_char=current_start + lead,
+                    end_char=current_start + lead + len(section_text),
                 ))
             current_label = detected
             current_lines = []
-            current_start = char_pos
+            # Sections start *after* the heading line, so offsets point at
+            # the content the section actually carries.
+            current_start = char_pos + len(line) + 1
         else:
             current_lines.append(line)
         char_pos += len(line) + 1  # +1 for the newline
@@ -179,21 +182,25 @@ def _segment_into_sections(text: str) -> list[_Section]:
     # Flush last section
     section_text = "\n".join(current_lines).strip()
     if section_text:
+        lead = len(section_text) - len(section_text.lstrip())
         sections.append(_Section(
             label=current_label,
             text=section_text,
-            start_char=current_start,
-            end_char=current_start + len(section_text),
+            start_char=current_start + lead,
+            end_char=current_start + lead + len(section_text),
         ))
 
     # If no sections detected, wrap the entire text as "other"
     if not sections:
-        sections.append(_Section(
-            label="other",
-            text=text.strip(),
-            start_char=0,
-            end_char=len(text.strip()),
-        ))
+        stripped = text.strip()
+        if stripped:
+            lead = len(text) - len(text.lstrip())
+            sections.append(_Section(
+                label="other",
+                text=stripped,
+                start_char=lead,
+                end_char=lead + len(stripped),
+            ))
 
     return sections
 
@@ -205,8 +212,10 @@ def _split_into_word_chunks(
 ) -> list[tuple[str, int, int]]:
     """Split text into chunks of approximately ``target_words`` words.
 
-    Splits on sentence boundaries when possible, falling back to word
-    boundaries.
+    Splits on sentence boundaries when possible. Chunk content is the
+    *verbatim* slice of ``text`` between the first and last word of the
+    group, so ``text[start:end]`` always reproduces the content exactly —
+    internal newlines and spacing survive instead of being normalized away.
 
     Args:
         text: Text to split.
@@ -219,40 +228,53 @@ def _split_into_word_chunks(
     if not text.strip():
         return []
 
-    words = text.split()
-    if len(words) <= target_words:
-        return [(text.strip(), base_start_char, base_start_char + len(text.strip()))]
+    # Walk the original text once, recording each word's real position, so
+    # spans never rely on assumptions about separator characters.
+    word_positions: list[tuple[str, int]] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i].isspace():
+            i += 1
+            continue
+        j = i
+        while j < n and not text[j].isspace():
+            j += 1
+        word_positions.append((text[i:j], i))
+        i = j
 
-    # Try sentence splitting first
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    chunks: list[tuple[str, int, int]] = []
-    current_words: list[str] = []
-    current_start = base_start_char
+    if len(word_positions) <= target_words:
+        first_start = word_positions[0][1]
+        last_end = word_positions[-1][1] + len(word_positions[-1][0])
+        return [(
+            text[first_start:last_end],
+            base_start_char + first_start,
+            base_start_char + last_end,
+        )]
 
-    for sentence in sentences:
-        sentence_words = sentence.split()
-        if current_words and len(current_words) + len(sentence_words) > target_words:
-            chunk_text = " ".join(current_words).strip()
-            if chunk_text:
-                chunks.append((
-                    chunk_text,
-                    current_start,
-                    current_start + len(chunk_text),
-                ))
-            current_start = current_start + len(chunk_text) + 1
-            current_words = sentence_words
+    # Group words, preferring to close a chunk right after a sentence ends
+    # once the target size is reached.
+    groups: list[list[tuple[str, int]]] = []
+    current: list[tuple[str, int]] = []
+    for word in word_positions:
+        current.append(word)
+        if len(current) >= target_words and word[0][-1] in ".!?":
+            groups.append(current)
+            current = []
+    if current:
+        if groups and len(current) < target_words // 2:
+            groups[-1].extend(current)
         else:
-            current_words.extend(sentence_words)
+            groups.append(current)
 
-    # Flush remaining
-    if current_words:
-        chunk_text = " ".join(current_words).strip()
-        if chunk_text:
-            chunks.append((
-                chunk_text,
-                current_start,
-                current_start + len(chunk_text),
-            ))
+    chunks: list[tuple[str, int, int]] = []
+    for group in groups:
+        span_start = group[0][1]
+        span_end = group[-1][1] + len(group[-1][0])
+        chunks.append((
+            text[span_start:span_end],
+            base_start_char + span_start,
+            base_start_char + span_end,
+        ))
 
     return chunks
 

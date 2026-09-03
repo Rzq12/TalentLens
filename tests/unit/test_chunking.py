@@ -185,3 +185,43 @@ def test_chunk_content_is_never_blank():
 
     assert chunks
     assert all(c.content.strip() for c in chunks)
+
+
+def test_offsets_round_trip_exactly_for_sectioned_resume():
+    """text[start_char:end_char] must reproduce chunk.content verbatim.
+
+    Phase 4 verifies evidence spans by slicing the document at the claimed
+    offsets. If offsets drift, every citation points at the wrong sentence.
+    """
+    chunks = chunk_document(_SECTIONED_RESUME)
+
+    assert chunks
+    for chunk in chunks:
+        recovered = _SECTIONED_RESUME[chunk.start_char:chunk.end_char]
+        assert recovered == chunk.content, (
+            f"offset drift in chunk {chunk.chunk_index}: "
+            f"slice={recovered!r} content={chunk.content!r}"
+        )
+
+
+def test_offsets_round_trip_when_sentences_span_newlines():
+    """Sentence splitting must not assume a single separator character.
+
+    Resume prose wraps across lines; a chunker that joins sentences with a
+    space but advances offsets by one character per sentence drifts on every
+    newline it swallows.
+    """
+    text = (
+        "Engineered scalable systems.\nDelivered production ML services.\n"
+        "Mentored junior engineers.\nOptimized query performance.\n"
+    ) * 30
+
+    chunks = chunk_document(text, child_words=20, parent_words=100)
+
+    assert chunks
+    for chunk in chunks:
+        recovered = text[chunk.start_char:chunk.end_char]
+        assert recovered == chunk.content, (
+            f"offset drift in chunk {chunk.chunk_index}: "
+            f"slice={recovered!r} content={chunk.content!r}"
+        )
