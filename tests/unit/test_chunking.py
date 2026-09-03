@@ -7,6 +7,8 @@ offsets drift, a citation points at the wrong part of the resume.
 
 from __future__ import annotations
 
+import pytest
+
 from app.services.chunking import (
     CHILD_CHUNK_WORDS,
     PARENT_CHUNK_WORDS,
@@ -141,6 +143,29 @@ def test_long_document_yields_multiple_parents():
     assert len(parents) > 1
 
 
+def test_punctuation_free_text_is_still_split_near_the_target():
+    """No sentence punctuation must not mean one unbounded chunk.
+
+    A section without any '.', '!' or '?' would otherwise be emitted as a
+    single chunk thousands of words long — far past the ~180/~700-word
+    budgets ARCHITECTURE.md §6.4 specifies.
+    """
+    text = "word " * 5000
+
+    child_target, parent_target = 20, 100
+    chunks = chunk_document(text, child_words=child_target, parent_words=parent_target)
+
+    assert chunks
+    for chunk in chunks:
+        words = len(chunk.content.split())
+        # Hard cap: 2x the target budget, per the review recommendation.
+        limit = (parent_target if chunk.is_parent else child_target) * 2
+        assert words <= limit, (
+            f"chunk {chunk.chunk_index} ({'parent' if chunk.is_parent else 'child'}) "
+            f"has {words} words, over the {limit}-word hard cap"
+        )
+
+
 def test_small_document_parent_also_serves_as_its_own_child():
     """A short section must still be searchable, not parent-only."""
     chunks = chunk_document("Skills\nPython and PostgreSQL.")
@@ -187,40 +212,49 @@ def test_chunk_content_is_never_blank():
     assert all(c.content.strip() for c in chunks)
 
 
-def test_offsets_round_trip_exactly_for_sectioned_resume():
+_NEWLINE_SENTENCES = (
+    "Engineered scalable systems.\nDelivered production ML services.\n"
+    "Mentored junior engineers.\nOptimized query performance.\n"
+) * 30
+
+_BLANK_INDENTED_AFTER_HEADING = (
+    "Work Experience\n\n  Staff Engineer at Acme Corp, 2019 to 2025. "
+    "Led the platform migration.\n"
+    "Technical Skills\n\n    Python, Go, PostgreSQL, Kafka.\n"
+)
+
+_INDENTED_PROSE = (
+    "\n\n  Just prose with leading blank lines and indentation. " "More sentences follow here.\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "kwargs"),
+    [
+        pytest.param(_SECTIONED_RESUME, {}, id="sectioned-resume"),
+        pytest.param(
+            _NEWLINE_SENTENCES,
+            {"child_words": 20, "parent_words": 100},
+            id="sentences-span-newlines",
+        ),
+        pytest.param(_BLANK_INDENTED_AFTER_HEADING, {}, id="blank-indented-after-heading"),
+        pytest.param(_INDENTED_PROSE, {}, id="indented-prose-no-headings"),
+    ],
+)
+def test_offsets_round_trip_exactly(text: str, kwargs: dict):
     """text[start_char:end_char] must reproduce chunk.content verbatim.
 
     Phase 4 verifies evidence spans by slicing the document at the claimed
     offsets. If offsets drift, every citation points at the wrong sentence.
+    Each case targets a distinct drift class: section headings, newline
+    separators swallowed by sentence splitting, blank/indented lines after
+    a heading, and leading whitespace in unstructured text.
     """
-    chunks = chunk_document(_SECTIONED_RESUME)
+    chunks = chunk_document(text, **kwargs)
 
     assert chunks
     for chunk in chunks:
-        recovered = _SECTIONED_RESUME[chunk.start_char:chunk.end_char]
-        assert recovered == chunk.content, (
-            f"offset drift in chunk {chunk.chunk_index}: "
-            f"slice={recovered!r} content={chunk.content!r}"
-        )
-
-
-def test_offsets_round_trip_when_sentences_span_newlines():
-    """Sentence splitting must not assume a single separator character.
-
-    Resume prose wraps across lines; a chunker that joins sentences with a
-    space but advances offsets by one character per sentence drifts on every
-    newline it swallows.
-    """
-    text = (
-        "Engineered scalable systems.\nDelivered production ML services.\n"
-        "Mentored junior engineers.\nOptimized query performance.\n"
-    ) * 30
-
-    chunks = chunk_document(text, child_words=20, parent_words=100)
-
-    assert chunks
-    for chunk in chunks:
-        recovered = text[chunk.start_char:chunk.end_char]
+        recovered = text[chunk.start_char : chunk.end_char]
         assert recovered == chunk.content, (
             f"offset drift in chunk {chunk.chunk_index}: "
             f"slice={recovered!r} content={chunk.content!r}"

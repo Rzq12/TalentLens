@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Chunking offsets now round-trip exactly: `text[start_char:end_char]` reproduces
+  chunk content verbatim for sectioned resumes, blank/indented lines after
+  headings, and sentences spanning newlines (previously drifted on every
+  swallowed newline)
+- Punctuation-free text no longer produces a single unbounded chunk; chunks are
+  hard-capped at 2× the target word budget
 - Repository moved from `Rzq12/talentlens` to `Rzq12/TalentLens`
 - Database quickstart image corrected to `pgvector/pgvector:pg16`
 - README endpoint listing updated to reflect 20 actual endpoints

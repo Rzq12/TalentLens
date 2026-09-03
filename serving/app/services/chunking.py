@@ -142,6 +142,37 @@ def _resolve_page(
     return 0
 
 
+def _make_section(
+    label: str,
+    joined_lines: str,
+    base_start_char: int,
+) -> _Section | None:
+    """Build a ``_Section`` whose offsets slice back to ``text`` exactly.
+
+    The section text is the stripped join of its lines; ``lead`` measures the
+    whitespace the strip removed so ``start_char`` lands on the first real
+    content character, not on blank or indented lines.
+
+    Args:
+        label: Section label.
+        joined_lines: The raw (unstripped) join of the section's lines.
+        base_start_char: Character offset of ``joined_lines`` in the document.
+
+    Returns:
+        The section, or None if it carries no content.
+    """
+    stripped = joined_lines.strip()
+    if not stripped:
+        return None
+    lead = len(joined_lines) - len(joined_lines.lstrip())
+    return _Section(
+        label=label,
+        text=stripped,
+        start_char=base_start_char + lead,
+        end_char=base_start_char + lead + len(stripped),
+    )
+
+
 def _segment_into_sections(text: str) -> list[_Section]:
     """Split text into sections based on heading detection.
 
@@ -161,15 +192,9 @@ def _segment_into_sections(text: str) -> list[_Section]:
     for line in lines:
         detected = _detect_section(line)
         if detected is not None:
-            section_text = "\n".join(current_lines).strip()
-            if section_text:
-                lead = len(section_text) - len(section_text.lstrip())
-                sections.append(_Section(
-                    label=current_label,
-                    text=section_text,
-                    start_char=current_start + lead,
-                    end_char=current_start + lead + len(section_text),
-                ))
+            section = _make_section(current_label, "\n".join(current_lines), current_start)
+            if section is not None:
+                sections.append(section)
             current_label = detected
             current_lines = []
             # Sections start *after* the heading line, so offsets point at
@@ -180,29 +205,25 @@ def _segment_into_sections(text: str) -> list[_Section]:
         char_pos += len(line) + 1  # +1 for the newline
 
     # Flush last section
-    section_text = "\n".join(current_lines).strip()
-    if section_text:
-        lead = len(section_text) - len(section_text.lstrip())
-        sections.append(_Section(
-            label=current_label,
-            text=section_text,
-            start_char=current_start + lead,
-            end_char=current_start + lead + len(section_text),
-        ))
+    section = _make_section(current_label, "\n".join(current_lines), current_start)
+    if section is not None:
+        sections.append(section)
 
     # If no sections detected, wrap the entire text as "other"
     if not sections:
-        stripped = text.strip()
-        if stripped:
-            lead = len(text) - len(text.lstrip())
-            sections.append(_Section(
-                label="other",
-                text=stripped,
-                start_char=lead,
-                end_char=lead + len(stripped),
-            ))
+        section = _make_section("other", text, 0)
+        if section is not None:
+            sections.append(section)
 
     return sections
+
+
+@dataclass(frozen=True, slots=True)
+class _WordPos:
+    """A word and its real character offset inside the section text."""
+
+    word: str
+    start: int
 
 
 def _split_into_word_chunks(
@@ -217,6 +238,10 @@ def _split_into_word_chunks(
     group, so ``text[start:end]`` always reproduces the content exactly —
     internal newlines and spacing survive instead of being normalized away.
 
+    Punctuation-free text never yields an unbounded chunk: a group is
+    force-closed at twice the target size, keeping every chunk within a
+    hard cap of ``2 * target_words``.
+
     Args:
         text: Text to split.
         target_words: Target word count per chunk.
@@ -230,7 +255,7 @@ def _split_into_word_chunks(
 
     # Walk the original text once, recording each word's real position, so
     # spans never rely on assumptions about separator characters.
-    word_positions: list[tuple[str, int]] = []
+    word_positions: list[_WordPos] = []
     i, n = 0, len(text)
     while i < n:
         if text[i].isspace():
@@ -239,25 +264,32 @@ def _split_into_word_chunks(
         j = i
         while j < n and not text[j].isspace():
             j += 1
-        word_positions.append((text[i:j], i))
+        word_positions.append(_WordPos(text[i:j], i))
         i = j
 
     if len(word_positions) <= target_words:
-        first_start = word_positions[0][1]
-        last_end = word_positions[-1][1] + len(word_positions[-1][0])
-        return [(
-            text[first_start:last_end],
-            base_start_char + first_start,
-            base_start_char + last_end,
-        )]
+        first_start = word_positions[0].start
+        last_end = word_positions[-1].start + len(word_positions[-1].word)
+        return [
+            (
+                text[first_start:last_end],
+                base_start_char + first_start,
+                base_start_char + last_end,
+            )
+        ]
 
     # Group words, preferring to close a chunk right after a sentence ends
-    # once the target size is reached.
-    groups: list[list[tuple[str, int]]] = []
-    current: list[tuple[str, int]] = []
+    # once the target size is reached. Punctuation or not, a group is
+    # force-closed at 2x the target so sizes stay bounded.
+    hard_cap = target_words * 2
+    groups: list[list[_WordPos]] = []
+    current: list[_WordPos] = []
     for word in word_positions:
         current.append(word)
-        if len(current) >= target_words and word[0][-1] in ".!?":
+        closes = (len(current) >= target_words and word.word[-1] in ".!?") or len(
+            current
+        ) >= hard_cap
+        if closes:
             groups.append(current)
             current = []
     if current:
@@ -268,13 +300,15 @@ def _split_into_word_chunks(
 
     chunks: list[tuple[str, int, int]] = []
     for group in groups:
-        span_start = group[0][1]
-        span_end = group[-1][1] + len(group[-1][0])
-        chunks.append((
-            text[span_start:span_end],
-            base_start_char + span_start,
-            base_start_char + span_end,
-        ))
+        span_start = group[0].start
+        span_end = group[-1].start + len(group[-1].word)
+        chunks.append(
+            (
+                text[span_start:span_end],
+                base_start_char + span_start,
+                base_start_char + span_end,
+            )
+        )
 
     return chunks
 
@@ -313,9 +347,7 @@ def chunk_document(
 
     for section in sections:
         # Create parent chunks from the section
-        parent_spans = _split_into_word_chunks(
-            section.text, parent_words, section.start_char
-        )
+        parent_spans = _split_into_word_chunks(section.text, parent_words, section.start_char)
 
         for parent_text, parent_start, parent_end in parent_spans:
             parent_id = uuid.uuid4()
@@ -338,9 +370,7 @@ def chunk_document(
             chunk_index += 1
 
             # Create child chunks within this parent
-            child_spans = _split_into_word_chunks(
-                parent_text, child_words, parent_start
-            )
+            child_spans = _split_into_word_chunks(parent_text, child_words, parent_start)
 
             # If the parent is small enough, it serves as its own child
             if len(child_spans) <= 1:
