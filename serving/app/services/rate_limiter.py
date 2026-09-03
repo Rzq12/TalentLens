@@ -22,22 +22,39 @@ from typing import ClassVar
 
 @dataclass
 class TokenBucket:
-    """Sliding-window token bucket for one (provider, model, key, window)."""
+    """Sliding-window budget for one (provider, model, key, window).
+
+    Memory is O(requests), not O(tokens): each entry is (timestamp, cost).
+    The previous implementation appended one timestamp PER TOKEN, so a
+    1,000,000-token TPM budget produced a list of up to a million floats per
+    bucket and an O(n) filter over all of them on every capacity check.
+    """
 
     capacity: int
     window_seconds: float = 60.0
-    _timestamps: list[float] = field(default_factory=list)
+    _events: list[tuple[float, int]] = field(default_factory=list)
+
+    def _prune(self, now: float) -> None:
+        """Drop entries that have left the window (in-place, front is oldest)."""
+        cutoff = now - self.window_seconds
+        events = self._events
+        keep_from = 0
+        while keep_from < len(events) and events[keep_from][0] <= cutoff:
+            keep_from += 1
+        if keep_from:
+            del events[:keep_from]
+
+    def _used(self, now: float) -> int:
+        self._prune(now)
+        return sum(cost for _, cost in self._events)
 
     def has_capacity(self, tokens: int) -> bool:
         """Return whether the bucket can accept tokens without consuming them."""
-        now = time.monotonic()
-        cutoff = now - self.window_seconds
-        self._timestamps = [timestamp for timestamp in self._timestamps if timestamp > cutoff]
-        return len(self._timestamps) + tokens <= self.capacity
+        return self._used(time.monotonic()) + tokens <= self.capacity
 
     def consume(self, tokens: int) -> None:
         """Consume tokens after a scheduler-wide capacity check."""
-        self._timestamps.extend([time.monotonic()] * tokens)
+        self._events.append((time.monotonic(), tokens))
 
     def try_consume(self, tokens: int) -> bool:
         """Return True if tokens were consumed within budget."""
@@ -49,20 +66,21 @@ class TokenBucket:
     def estimated_wait(self, tokens: int) -> float:
         """Seconds until budget likely available."""
         now = time.monotonic()
-        cutoff = now - self.window_seconds
-        self._timestamps = [t for t in self._timestamps if t > cutoff]
-        if len(self._timestamps) + tokens <= self.capacity:
+        used = self._used(now)
+        if used + tokens <= self.capacity:
             return 0.0
-        # Wait for enough old tokens to expire
-        needed = len(self._timestamps) + tokens - self.capacity
-        if needed <= 0:
-            return 0.0
-        # Sort oldest first, find the needed-th oldest
-        sorted_ts = sorted(self._timestamps)
-        if needed <= len(sorted_ts):
-            oldest_needed = sorted_ts[needed - 1]
-            wait = (oldest_needed + self.window_seconds) - now
-            return max(wait, 1.0)
+        # Wait until enough token weight has left the window. Each entry
+        # expires window_seconds after its arrival, so releasing ``needed``
+        # tokens requires the entry that carried the (used - needed + 1)-th
+        # token of weight to age out — the earliest such moment is that
+        # entry's arrival time plus the window.
+        needed = used + tokens - self.capacity
+        remaining_to_free = needed
+        for timestamp, cost in self._events:  # oldest first after _prune
+            remaining_to_free -= cost
+            if remaining_to_free <= 0:
+                wait = (timestamp + self.window_seconds) - now
+                return max(wait, 1.0)
         return self.window_seconds
 
 

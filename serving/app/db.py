@@ -121,6 +121,22 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+        finally:
+            # C1 fix: the setting above is session-scoped (is_local=false) and
+            # SURVIVES transaction rollback/commit. Without an explicit reset,
+            # a pooled connection returns to the pool still carrying the
+            # previous request's tenant id, so a later request that never sets
+            # a context (public endpoints, early errors) reads under the old
+            # tenant's RLS policy — a cross-tenant data leak.
+            try:
+                await session.execute(
+                    text("SELECT set_config('app.current_tenant_id', '', false)")
+                )
+            except Exception:
+                # The connection may be in a failed state (e.g. pending
+                # rollback after a server error). Never return a connection
+                # whose tenant context we could not verify — discard it.
+                session.invalidate()
 
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]

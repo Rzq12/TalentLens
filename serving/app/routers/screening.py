@@ -235,7 +235,6 @@ async def get_run_status(
 async def stream_run_events(
     *,
     run_id: uuid.UUID,
-    session: DbSession,
     principal: ReadPrincipal,
 ) -> StreamingResponse:
     """Stream screening run progress as Server-Sent Events.
@@ -246,9 +245,16 @@ async def stream_run_events(
     belonging to another tenant is reported as absent rather than forbidden,
     so the endpoint does not confirm that a given run id exists.
 
+    This endpoint deliberately does NOT take ``DbSession``. A dependency
+    session only closes when the response completes, so for a
+    ``StreamingResponse`` that means the pooled connection would be held for
+    the entire stream — potentially hours. N dashboard viewers would pin N
+    connections and starve ``db_pool_size`` for the whole API. The ownership
+    check below uses a short-lived session that is released before streaming
+    begins; the stream itself reads only from the in-memory SSE manager.
+
     Args:
         run_id: Run whose progress to stream.
-        session: Request-scoped database session.
         principal: Authenticated caller; supplies the tenant scope.
 
     Returns:
@@ -259,14 +265,13 @@ async def stream_run_events(
         ResourceNotFoundError: If the run does not exist, or belongs to a
             different tenant.
     """
-    run = await session.get(ScreeningRun, run_id)
-    if run is None or run.tenant_id != principal.tenant_id:
-        raise ResourceNotFoundError("Screening run not found.")
-
-    cancel_event = asyncio.Event()
+    async with get_sessionmaker()() as session:
+        run = await session.get(ScreeningRun, run_id)
+        if run is None or run.tenant_id != principal.tenant_id:
+            raise ResourceNotFoundError("Screening run not found.")
 
     async def _generate() -> AsyncIterator[bytes]:
-        async for chunk in _sse.subscribe(run_id, cancel_event):
+        async for chunk in _sse.subscribe(run_id):
             yield chunk
 
     return StreamingResponse(

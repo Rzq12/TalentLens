@@ -6,19 +6,22 @@ registration. No business logic and no database access live here.
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import Settings, get_settings
-from app.db import set_tenant_context as _set_tenant_context
+from app.db import get_sessionmaker, set_tenant_context as _set_tenant_context
 from app.exceptions import TalentLensError
 from app.logging import configure_logging, get_logger
 from app.routers import (
@@ -330,6 +333,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # map for an attacker. Publish it everywhere except production.
     expose_docs = cfg.environment != "production"
 
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        """Fail fast on schema/config drift before the app accepts traffic.
+
+        ``verify_embedding_dimensions`` raises when a pgvector column width
+        disagrees with ``Settings.embedding_dim`` — a mismatch that otherwise
+        only surfaces as a pgvector error on the first insert, killing the
+        ingest pipeline in a deployment that looked healthy. A database that
+        is unreachable at boot logs a warning instead of crashing: liveness
+        must not depend on the database being up at process start.
+        """
+        try:
+            await verify_embedding_dimensions()
+        except RuntimeError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "embedding_dimension_check_skipped",
+                reason=type(exc).__name__,
+                detail=str(exc),
+            )
+        yield
+
     app = FastAPI(
         title=cfg.app_name,
         version=cfg.version,
@@ -337,6 +363,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         docs_url="/docs" if expose_docs else None,
         redoc_url="/redoc" if expose_docs else None,
         openapi_url="/openapi.json" if expose_docs else None,
+        lifespan=lifespan,
     )
 
     _register_middleware(app, cfg)
@@ -410,3 +437,79 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         registry.register(agent_cls, factories[agent_cls.name])
 
     return app
+
+
+_VECTOR_TYPE_RE = re.compile(r"^(?:vector|halfvec)\((\d+)\)$")
+_EMBEDDING_COLUMNS: dict[str, str] = {
+    # table -> column, mirrors models.EMBEDDING_DIM usage.
+    "resume_chunks": "embedding",
+    "requirements": "embedding",
+}
+
+
+async def verify_embedding_dimensions() -> None:
+    """Fail fast at startup when a pgvector column width disagrees with config.
+
+    A mismatch otherwise surfaces only as a pgvector "expected N dimensions,
+    not M" error on the first insert — killing the entire ingest pipeline in
+    a deployment that appeared healthy. Reads the column types directly from
+    the catalog so this works for both ``vector`` and ``halfvec`` columns.
+    """
+    from app.models import EMBEDDING_DIM
+
+    async with get_sessionmaker()() as session:
+        for table, column in _EMBEDDING_COLUMNS.items():
+            col_type = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT format_type(a.atttypid, a.atttypmod)
+                        FROM pg_attribute a
+                        JOIN pg_class c ON c.oid = a.attrelid
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relname = :table
+                          AND a.attname = :column
+                          AND a.attnum > 0
+                          AND NOT a.attisdropped
+                          AND n.nspname = ANY (current_schemas(false))
+                        """
+                    ),
+                    {"table": table, "column": column},
+                )
+            ).scalar_one_or_none()
+
+            if col_type is None:
+                # Table not migrated yet — the migrations own that failure
+                # mode; don't duplicate it here.
+                logger.warning(
+                    "embedding_column_not_found",
+                    table=table,
+                    column=column,
+                )
+                continue
+
+            match = _VECTOR_TYPE_RE.match(col_type)
+            if match is None:
+                logger.error(
+                    "embedding_column_type_unexpected",
+                    table=table,
+                    column=column,
+                    column_type=col_type,
+                    expected_dim=EMBEDDING_DIM,
+                )
+                continue
+
+            db_dim = int(match.group(1))
+            if db_dim != EMBEDDING_DIM:
+                raise RuntimeError(
+                    f"Embedding dimension mismatch: {table}.{column} is "
+                    f"{col_type} but Settings.embedding_dim is {EMBEDDING_DIM}. "
+                    "Align the migrations, models.EMBEDDING_DIM, and "
+                    "EMBEDDING_DIM config before serving."
+                )
+            logger.info(
+                "embedding_dimension_verified",
+                table=table,
+                column=column,
+                dim=db_dim,
+            )

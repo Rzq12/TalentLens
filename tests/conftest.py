@@ -91,12 +91,22 @@ def _test_environment() -> Iterator[None]:
     }
     previous = {k: os.environ.get(k) for k in defaults}
     os.environ.update(defaults)
+    # Modules imported at pytest collection time (before this fixture ran) may
+    # have called get_settings() — e.g. models.EMBEDDING_DIM — which caches a
+    # Settings built from the developer's real .env (production JWT secret,
+    # storage backend). Every auth test would then 401 with
+    # InvalidSignatureError because tokens are minted with JWT_TEST_SECRET.
+    # Drop the cache so the next get_settings() reads the pinned env.
+    from app.config import get_settings
+
+    get_settings.cache_clear()
     yield
     for key, value in previous.items():
         if value is None:
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
+    get_settings.cache_clear()
 
 
 @pytest.fixture(autouse=True)

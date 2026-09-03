@@ -58,12 +58,14 @@ class SSEManager:
         })
 
     async def subscribe(
-        self, run_id: uuid.UUID, cancel_event: asyncio.Event,
+        self, run_id: uuid.UUID, cancel_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[bytes, None]:
         """Async generator yielding SSE-formatted bytes for a run.
 
-        Yields until the run completes/fails/cancels or the connection
-        is closed (cancel_event is set).
+        Yields until the run completes/fails/cancels. ``cancel_event`` is
+        optional: when omitted, the stream still terminates on terminal events
+        and on client disconnect (the ASGI server cancels the generator, which
+        surfaces as ``GeneratorExit``/``CancelledError`` here).
         """
         queue = self._ensure_queue(run_id)
         heartbeat_interval = 15  # seconds
@@ -84,7 +86,7 @@ class SSEManager:
                 # Send heartbeat
                 yield _format_sse(EventType.HEARTBEAT.value, {}, time.time())
 
-            if cancel_event.is_set():
+            if cancel_event is not None and cancel_event.is_set():
                 break
 
     def remove(self, run_id: uuid.UUID) -> None:

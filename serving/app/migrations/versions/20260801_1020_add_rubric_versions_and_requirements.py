@@ -12,6 +12,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from app.models import EMBEDDING_DIM
+
 revision: str = "b2c3d4e5f6a7"
 down_revision: str | None = "a1b2c3d4e5f6"
 branch_labels: str | Sequence[str] | None = None
@@ -101,7 +103,10 @@ def upgrade() -> None:
 
     # Alembic cannot render pgvector types, so the embedding column goes in as
     # raw SQL. The extension is already installed by revision a1b2c3d4e5f6.
-    op.execute("ALTER TABLE requirements ADD COLUMN embedding halfvec(1024)")
+    # Width follows Settings.embedding_dim via models.EMBEDDING_DIM.
+    op.execute(
+        f"ALTER TABLE requirements ADD COLUMN embedding halfvec({EMBEDDING_DIM})"
+    )
 
 
 def downgrade() -> None:

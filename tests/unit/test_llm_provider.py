@@ -629,7 +629,7 @@ async def test_scheduler_reservation_uses_estimated_prompt_and_output_tokens() -
     )
 
     tpm_bucket, _, _ = scheduler._buckets[scheduler._key("a", "a-model", "a-test-key")]
-    assert len(tpm_bucket._timestamps) == 5
+    assert sum(cost for _, cost in tpm_bucket._events) == 5
 
 
 async def test_an_empty_chain_raises_rather_than_returning_nothing() -> None:

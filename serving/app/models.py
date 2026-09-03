@@ -32,7 +32,14 @@ from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.config import get_settings
 from app.db import Base
+
+#: Single source of truth for pgvector column width. The HNSW index, the
+#: embedding service, and the migrations that create these columns all derive
+#: from ``Settings.embedding_dim`` — a literal here and a different default in
+#: config would make every insert fail with a pgvector dimension error.
+EMBEDDING_DIM: int = get_settings().embedding_dim
 
 
 class TimestampMixin:
@@ -200,11 +207,13 @@ class ResumeChunk(TimestampMixin, Base):
 
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    # pgvector embedding — stored as vector(1024). The HNSW index is created
-    # in the Alembic migration rather than here because SQLAlchemy's Index()
-    # does not support the pgvector-specific USING/WITH clauses.
+    # pgvector embedding — width always follows Settings.embedding_dim (the
+    # embedding service produces vectors of exactly that length). The HNSW
+    # index is created in the Alembic migration rather than here because
+    # SQLAlchemy's Index() does not support the pgvector-specific USING/WITH
+    # clauses.
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(1024), nullable=True
+        Vector(EMBEDDING_DIM), nullable=True
     )
 
     embedding_model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
@@ -343,7 +352,9 @@ class Requirement(TimestampMixin, Base):
     # Half precision because requirement counts are small and the extra recall
     # from full precision is not worth doubling the index footprint. The HNSW
     # index is created in the Alembic migration, not here.
-    embedding: Mapped[list[float] | None] = mapped_column(HALFVEC(1024), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        HALFVEC(EMBEDDING_DIM), nullable=True
+    )
 
     rubric_version: Mapped[RubricVersion] = relationship(back_populates="requirements")
 
@@ -356,9 +367,10 @@ class ScreeningRun(TimestampMixin, Base):
     deletable out from under it. The job itself CASCADEs — deleting a job is a
     deliberate purge of everything scoped to it.
 
-    ``triggered_by`` is a plain uuid, not a foreign key: the ``users`` table
-    described in ARCHITECTURE.md §6.4 does not exist in this repo yet, and
-    declaring the constraint would make the migration unrunnable.
+    ``triggered_by`` references ``users.id`` (ON DELETE SET NULL) — the
+    constraint is created by migration h8i9j0k1l2m3 as
+    ``fk_screening_runs_triggered_by`` and declared here so
+    ``compare_metadata`` sees no drift.
     """
 
     __tablename__ = "screening_runs"
@@ -400,7 +412,9 @@ class ScreeningRun(TimestampMixin, Base):
     workflow_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     triggered_by: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     cost_usd: Mapped[Decimal] = mapped_column(
@@ -429,10 +443,10 @@ class CandidateScore(TimestampMixin, Base):
     no must-have cap fired, so "was this candidate capped" is answerable without
     recomputing the rubric.
 
-    ``candidate_id`` and ``profile_id`` are plain uuids rather than foreign
-    keys: the ``candidates`` and ``candidate_profiles`` tables described in
-    ARCHITECTURE.md §6.3 are not built in this repo, and declaring the
-    constraints would make the migration unrunnable.
+    ``candidate_id`` references ``candidates.id`` (RESTRICT) and
+    ``profile_id`` references ``candidate_profiles.id`` (SET NULL) — both
+    constraints are created by migration h8i9j0k1l2m3 and declared here so
+    ``compare_metadata`` sees no drift.
     """
 
     __tablename__ = "candidate_scores"
@@ -456,10 +470,14 @@ class CandidateScore(TimestampMixin, Base):
         nullable=False,
     )
     candidate_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=False
+        PG_UUID(as_uuid=True),
+        ForeignKey("candidates.id", ondelete="RESTRICT"),
+        nullable=False,
     )
     profile_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
+        PG_UUID(as_uuid=True),
+        ForeignKey("candidate_profiles.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     overall_score: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
@@ -644,6 +662,9 @@ class RunTask(TimestampMixin, Base):
     __tablename__ = "run_tasks"
     __table_args__ = (
         Index("ix_run_tasks_run_status", "run_id", "status", "not_before"),
+        # Created by 20260811_0115 for the orchestrator's ready-task claim
+        # query; declared here so compare_metadata sees no drift.
+        Index("ix_run_tasks_ready", "stage", "status", "not_before"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

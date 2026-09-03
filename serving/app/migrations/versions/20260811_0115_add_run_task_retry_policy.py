@@ -10,8 +10,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "20260811_0115"
-down_revision = "20260810_0100"
+revision: str = "20260811_0115"
+down_revision: str | None = "20260810_0100"
 branch_labels = None
 depends_on = None
 

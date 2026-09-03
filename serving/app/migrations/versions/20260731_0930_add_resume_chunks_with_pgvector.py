@@ -12,6 +12,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from app.models import EMBEDDING_DIM
+
 revision: str = "a1b2c3d4e5f6"
 down_revision: str | None = "dd2329f32308"
 branch_labels: str | Sequence[str] | None = None
@@ -63,8 +65,12 @@ def upgrade() -> None:
     )
 
     # Add the pgvector embedding column — raw SQL because Alembic/SA don't
-    # know about the vector type natively
-    op.execute("ALTER TABLE resume_chunks ADD COLUMN embedding vector(1024)")
+    # know about the vector type natively. Width follows Settings.embedding_dim
+    # via models.EMBEDDING_DIM so the column can never disagree with the
+    # vectors the embedding service produces.
+    op.execute(
+        f"ALTER TABLE resume_chunks ADD COLUMN embedding vector({EMBEDDING_DIM})"
+    )
 
     # Replace the content_tsv text column with a real tsvector column
     op.execute("ALTER TABLE resume_chunks DROP COLUMN IF EXISTS content_tsv")

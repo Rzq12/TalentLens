@@ -1,15 +1,19 @@
-"""enable_rls_on_all_tenant_scoped_tables
+"""enable_rls_on_all_tenant_scoped_tables (SUPERSEDED — see 20260812_0120)
 
 Revision ID: g7h8i9j0k1l2
 Revises: f6a7b8c9d0e1
 Create Date: 2026-08-09
 
-Enables Row-Level Security on every table carrying a ``tenant_id`` column
-and creates a policy that filters reads/writes to the tenant set by the
-application via ``current_setting('app.current_tenant_id')``.
+HISTORY FIX: this revision originally enabled RLS on every tenant-scoped
+table, but most of those tables (candidates, audit_events, chat_sessions,
+decisions, user_roles, ...) are only CREATED by the NEXT revision
+(h8i9j0k1l2m3). Running `alembic upgrade head` on a fresh database failed
+with "relation does not exist". The suite never noticed because tests build
+the schema from ORM metadata, not from the migration chain.
 
-Plan Phase 0 gate: "two tenants cannot see each other's data, verified
-by automated test."
+The RLS statements now live in 20260812_0120, which runs after every table
+exists. This revision is kept as a no-op so existing `alembic_version` rows
+remain valid.
 """
 
 from collections.abc import Sequence
@@ -21,6 +25,7 @@ down_revision: str | None = "h8i9j0k1l2m3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# Kept for reference; the authoritative list now lives in 20260812_0120.
 TENANT_TABLES = [
     "resume_documents",
     "resume_versions",
@@ -51,20 +56,11 @@ TENANT_TABLES = [
 
 
 def upgrade() -> None:
-    for table in TENANT_TABLES:
-        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
-        op.execute(
-            f"""
-            CREATE POLICY tenant_isolation_{table}
-            ON {table}
-            FOR ALL
-            USING (tenant_id = current_setting('app.current_tenant_id')::uuid)
-            WITH CHECK (tenant_id = current_setting('app.current_tenant_id')::uuid)
-            """
-        )
+    # No-op: RLS enablement moved to 20260812_0120 (after h8i9j0k1l2m3
+    # creates the tables this list references). See module docstring.
+    pass
 
 
 def downgrade() -> None:
-    for table in TENANT_TABLES:
-        op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
-        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+    # No-op for the same reason; 20260812_0120.downgrade drops the policies.
+    pass

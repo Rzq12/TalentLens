@@ -202,19 +202,18 @@ def test_candidate_score_records_the_formula_that_produced_it() -> None:
     assert column.nullable is False
 
 
-def test_candidate_score_candidate_id_is_a_plain_uuid() -> None:
-    """There is no `candidates` table in this repository yet.
+def test_candidate_score_candidate_id_is_a_real_foreign_key() -> None:
+    """`candidates` exists (created by migration h8i9j0k1l2m3).
 
-    ARCHITECTURE.md section 6.6 declares `candidate_id` as a foreign key, but
-    the `candidates` table it points at is unbuilt — the same situation as
-    `Requirement.skill_id` and the ESCO taxonomy. Declaring the FK here would
-    make the migration unrunnable, so the column is a plain uuid until the
-    table exists.
+    ARCHITECTURE.md section 6.6 declares `candidate_id` as a foreign key and
+    the database enforces it (`fk_candidate_scores_candidate_id`, RESTRICT).
+    The ORM declares the same FK so `compare_metadata` sees no drift.
     """
     column = models.CandidateScore.__table__.columns["candidate_id"]
 
     assert column.nullable is False
-    assert not column.foreign_keys
+    fk = next(iter(column.foreign_keys))
+    assert fk.target_fullname == "candidates.id"
 
 
 # --- requirement_verdicts --------------------------------------------------
